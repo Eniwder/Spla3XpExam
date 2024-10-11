@@ -9,14 +9,13 @@ Array.prototype.last = function () {
   if (this.length < 1) return undefined;
   return this[this.length - 1];
 };
-function shuffle(array) {
-  const shuffledArray = [...array];
-  for (let i = shuffledArray.length - 1; i > 0; i--) {
+Array.prototype.shuffle = function () {
+  for (let i = this.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
-    [shuffledArray[i], shuffledArray[j]] = [shuffledArray[j], shuffledArray[i]];
+    [this[i], this[j]] = [this[j], this[i]];
   }
-  return shuffledArray;
-}
+  return this; // 元の配列を返す
+};
 function average(array) {
   if (array.length === 0) return NaN;
   const sum = array.reduce((accumulator, currentValue) => accumulator + currentValue, 0);
@@ -28,43 +27,44 @@ function toFixedNumber(v, decimals) {
 
 const XpAvg = 2000;
 const PlayerNum = 2000;
-const Sd = 240; // 大体　1000～3000の空間になる。適正3000場合はスプラ2でも当然XP3000を超える。
-const Rd = 200;
-const Vol = 0.06;
-const Tau = 0.5;
+const defaultSd = 240; // 大体　1000～3000の空間になる。適正3000場合はスプラ2でも当然XP3000を超える。
+const defaultRd = 200;
+const defaultVol = 0.05;
+const defaultTau = 0.5;
 const logHistory = true;
 const splitRankN = 0;
 const splitXp2000 = true;
 const isGuarantee = true;
 const isFT3 = true;
+const fairSplitTeam = false;
 const countStop = 3000;
-const positiveImpactFactor = 0.7;  // 平均より強いプレイヤーの影響度 TODO このへんは、スプラ2の方式でXP3100のプレイヤーがスプラ3の方式でXP5000になるよう調整する
-const negativeImpactFactor = 0.3;  // 平均より弱いプレイヤーの影響度
+const positiveImpactFactor = 0.3;  // 平均より強いプレイヤーの影響度 TODO このへんは、スプラ2の方式でXP3100のプレイヤーがスプラ3の方式でXP5000になるよう調整する
+const negativeImpactFactor = 0.2;  // 平均より弱いプレイヤーの影響度
 const LimitRateMatch = "limitRateMatch";
 const matchAlgo = LimitRateMatch;
 const targetPlayerRate = 3200;
 
 const ranking4Tmp = new Glicko2({
-  tau: Tau,
+  tau: defaultTau,
   rating: XpAvg,
-  rd: Rd,
-  vol: Vol,
+  rd: defaultRd,
+  vol: defaultVol,
 });
 
 class Player {
   constructor(trueRating) {
     this.id = crypto.randomUUID();
-    this.trueRating = trueRating || XpAvg + Sd * boxmuller();     // プレイヤーの実際のレーティング
+    this.trueRating = trueRating || XpAvg + defaultSd * boxmuller();     // プレイヤーの実際のレーティング
     this.xp = XpAvg + (this.trueRating - XpAvg) * 0.5;     // プレイヤーのスプラ3レーティング。実際のレーティングに少し近い値を入れておく
-    this.rd = Rd; // レーティングの不確実性
-    this.vol = Vol; // ボラティリティ
+    this.rd = defaultRd; // レーティングの不確実性
+    this.vol = defaultVol; // ボラティリティ
     this.gameResults = [];
     this.history = [];
     this.ranking = new Glicko2({
-      tau: Tau,
+      tau: defaultTau,
       rating: XpAvg,
-      rd: Rd,
-      vol: Vol,
+      rd: defaultRd,
+      vol: defaultVol,
     });
   }
 
@@ -75,15 +75,18 @@ class Player {
   }
 
   battle(myTeam, opponentTeam, expected, isWin) {
-    // レート計算の時は、「チームのレート」と「自身のRD,vol」で増減を判断する
+    // TODO レート計算の時は、「自身のXP、RD,vol」で増減を判断する。(実際の分布で試すまで未定)
+    // 普通に考えるとチームの平均XPで増減を決める方が公平だが、スプラ3でXP5000から[2-3]のスコアで-600などを再現しようとすると、
+    // RDを180くらいに高める必要があり、そのためには個人のXPで計算しないと辻褄が合わない。　
     const myTeamObj = this.ranking.makePlayer(this.xp, this.rd, this.vol);
     // 「ranking.updateRatings」では自身のplayerのみ更新処理が実行されるので、レート更新に不要なデータは処理しない領域でplayerを作る
     const opponentTeamObj = ranking4Tmp.makePlayer(opponentTeam.xp, opponentTeam.rd, opponentTeam.vol);
     ranking4Tmp.removePlayers();
     // 後でまとめて差を計算できるように各種パラメーターを追加しておく
-    myTeamObj.xp = this.xp;
-    myTeamObj._rd = this.rd;
-    myTeamObj._vol = this.vol;
+    myTeamObj.xp = myTeam.xp;
+    myTeamObj.myXp = this.xp;
+    myTeamObj.myRd = this.rd;
+    myTeamObj.myVol = this.vol;
     myTeamObj.expected = expected;
     opponentTeamObj.xp = opponentTeam.xp;
 
@@ -107,7 +110,7 @@ class Player {
           opponentXp: battle[1].xp,
           expected: battle[0].expected,
           result: !!battle[2],
-          estimateChangeXp: battle[0].getRating() - battle[0].xp,
+          estimateChangeXp: battle[0].getRating() - battle[0].myXp,
           rd: this.rd,
           vol: this.vol,
         }))
@@ -116,9 +119,9 @@ class Player {
 
     // セット終了後、全ての増減を一度に更新する
     const [diffSumXp, diffSumRd, diffSumVol] = this.gameResults.reduce((acc, v) => {
-      acc[0] += Number(v[0].getRating() - v[0].xp);
-      acc[1] += (v[0].getRd() - v[0]._rd);
-      acc[2] += (v[0].getVol() - v[0]._vol);
+      acc[0] += v[0].getRating() - v[0].myXp;
+      acc[1] += v[0].getRd() - v[0].myRd;
+      acc[2] += v[0].getVol() - v[0].myVol;
       return acc;
     }, [0, 0, 0]);
 
@@ -130,7 +133,7 @@ class Player {
     if (logHistory) {
       const lastItem = this.history.last().last();
       lastItem.endXp = this.xp;
-      lastItem.endRd = toInRange(50, this.rd, 350);
+      lastItem.endRd = this.rd;
       lastItem.endVol = this.vol;
     }
 
@@ -181,9 +184,15 @@ for (let i = 0; i < 2000; i++) {
 
   groups.forEach(_ => {
     // TODO チーム分けも設定できるようにする
-    const shuffleMem = shuffle(_);
-    const teamA = shuffleMem.slice(0, 4);
-    const teamB = shuffleMem.slice(4);
+    const teamA = [];
+    const teamB = [];
+    if (fairSplitTeam) {
+      _.sort((a, b) => a.xp - b.xp);
+    } else {
+      _.shuffle();
+    }
+    teamA.push(_[0], _[2], _[4], _[6]);
+    teamB.push(_[1], _[3], _[5], _[7]);
     // glicko2は1vs1で対戦するレーティングシステムのため、各チームの平均ステータスを持つ仮想プレイヤーを作成して計算をする
     const statsTeamA = {
       trueRating: average(teamA.map(_ => _.trueRating)),
@@ -232,7 +241,7 @@ function getMatches(players) {
 
   // 指定したレート範囲でランダムに選ばれたメンバーでマッチングをする
   function limitRateMatch(players, limit) {
-    shuffle(players);
+    players.shuffle();
     let currentGroup = [];
     let groupedIdx = [];
     let maxXp = 0, minXp = 0;
