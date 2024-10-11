@@ -42,7 +42,7 @@ const positiveImpactFactor = 0.3;  // 平均より強いプレイヤーの影響
 const negativeImpactFactor = 0.2;  // 平均より弱いプレイヤーの影響度
 const LimitRateMatch = "limitRateMatch";
 const matchAlgo = LimitRateMatch;
-const targetPlayerRate = 3200;
+const targetPlayerRate = 2200;
 
 const ranking4Tmp = new Glicko2({
   tau: defaultTau,
@@ -157,11 +157,11 @@ class Player {
 // プレイヤー生成
 const players = range(PlayerNum)
   .map(_ => new Player());
-players.push(new Player(targetPlayerRate)); // 実験用XP3000
+const targetPlayer = new Player(targetPlayerRate);
+players.push(targetPlayer);
 
 // let player = players[parseInt(Math.random() * players.length)]; // for debug
-let player = players.sort((a, b) => b.trueRating - a.trueRating)[0];
-console.log(player.toString());
+console.log(targetPlayer.toString());
 
 // 試合をまわす
 for (let i = 0; i < 2000; i++) {
@@ -282,7 +282,7 @@ function getMatches(players) {
     return groups;
   }
 }
-player.history.forEach(set => {
+targetPlayer.history.forEach(set => {
   if (!set.last().result) {
     if (isFT3) console.log(`[Set: ${set[0].set}] ${set.filter(_ => _.result).length}-${set.filter(_ => !_.result).length} ${set.last().result ? 'Win' : 'Lose'}`);
     let diffStr = toFixedNumber(set.last().endXp - set[0].xp, 1);
@@ -295,7 +295,7 @@ player.history.forEach(set => {
     console.log();
   }
 });
-// player.history.forEach(set => {
+// targetPlayer.history.forEach(set => {
 //   if (isFT3) console.log(`[Set: ${set[0].set}] ${set.filter(_ => _.result).length}-${set.filter(_ => !_.result).length} ${set.last().result ? 'Win' : 'Lose'}`);
 //   let diffStr = toFixedNumber(set.last().endXp - set[0].xp, 1);
 //   diffStr = ((diffStr >= 0 ? '+' : '') + diffStr);
@@ -306,8 +306,8 @@ player.history.forEach(set => {
 
 //   console.log();
 // });
-console.log(`Winning rate: ${toFixedNumber(average(player.history.map(set => set.last().result ? 100 : 0)), 1)}%`);
-console.log(`Max XP: ${toFixedNumber(Math.max(...player.history.map(set => set.last().endXp)), 1)}\tMin XP: ${toFixedNumber(Math.min(...player.history.map(set => set.last().xp)), 1)}`);
+console.log(`Winning rate: ${toFixedNumber(average(targetPlayer.history.map(set => set.last().result ? 100 : 0)), 1)}%`);
+console.log(`Max XP: ${toFixedNumber(Math.max(...targetPlayer.history.map(set => set.last().endXp)), 1)}\tMin XP: ${toFixedNumber(Math.min(...targetPlayer.history.map(set => set.last().xp)), 1)}`);
 console.log();
 
-console.log(player.toString());
+console.log(targetPlayer.toString());
