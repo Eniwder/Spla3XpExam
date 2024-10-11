@@ -22,24 +22,33 @@ function average(array) {
   const sum = array.reduce((accumulator, currentValue) => accumulator + currentValue, 0);
   return sum / array.length;
 }
+function toFixedNumber(v, decimals) {
+  return v.toFixed(decimals);
+}
 
 const XpAvg = 2000;
 const PlayerNum = 2000;
 const Sd = 240; // 大体　1000～3000の空間になる。適正3000場合はスプラ2でも当然XP3000を超える。
 const Rd = 200;
 const Vol = 0.06;
+const Tau = 0.5;
 const logHistory = true;
 const splitRankN = 0;
 const splitXp2000 = true;
 const isGuarantee = true;
 const isFT3 = true;
 const countStop = 3000;
+const positiveImpactFactor = 1.5;  // 平均より強いプレイヤーの影響度 TODO このへんは、スプラ2の方式でXP3100のプレイヤーがスプラ3の方式でXP5000になるよう調整する
+const negativeImpactFactor = 0.3;  // 平均より弱いプレイヤーの影響度
+const LimitRateMatch = "limitRateMatch";
+const matchAlgo = LimitRateMatch;
+const targetPlayerRate = 3200;
 
 const ranking4Tmp = new Glicko2({
-  tau: 0.5,
+  tau: Tau,
   rating: XpAvg,
-  rd: 200,
-  vol: 0.06,
+  rd: Rd,
+  vol: Vol,
 });
 
 class Player {
@@ -52,10 +61,10 @@ class Player {
     this.gameResults = [];
     this.history = [];
     this.ranking = new Glicko2({
-      tau: 0.5,
+      tau: Tau,
       rating: XpAvg,
-      rd: 200,
-      vol: 0.06,
+      rd: Rd,
+      vol: Vol,
     });
   }
 
@@ -145,7 +154,7 @@ class Player {
 // プレイヤー生成
 const players = range(PlayerNum)
   .map(_ => new Player());
-players.push(new Player(3200)); // 実験用XP3000
+players.push(new Player(targetPlayerRate)); // 実験用XP3000
 
 // let player = players[parseInt(Math.random() * players.length)]; // for debug
 let player = players.sort((a, b) => b.trueRating - a.trueRating)[0];
@@ -192,10 +201,12 @@ for (let i = 0; i < 2000; i++) {
     // スプラ3のXPではなく内部レート(真の実力と仮定)を元に勝率を計算する
     // 勝敗は部屋の平均パワーから離れているプレイヤーの影響を大きくする
     // 例えば極端に弱いプレイヤーがいるチームは負けやすくなり、極端に強いプレイヤーがいるほうが勝ちやすくなる
-    // この式に根拠は無いが、色々なパターンを試してみて、おおよそ現実に即した結果になるのがこの式
-    const roomAvg = (statsTeamA.trueRating + statsTeamB.trueRating) / 2;
-    const actualPowerA = statsTeamA.trueRating + Math.sqrt(average(teamA.map(_ => (_.trueRating - roomAvg) * (_.trueRating - roomAvg))));
-    const actualPowerB = statsTeamB.trueRating + Math.sqrt(average(teamB.map(_ => (_.trueRating - roomAvg) * (_.trueRating - roomAvg))));
+    const adjustImpact = ratingDifference => ratingDifference >= 0
+      ? positiveImpactFactor * Math.sqrt(ratingDifference * ratingDifference)
+      : -negativeImpactFactor * Math.sqrt(ratingDifference * ratingDifference);
+
+    const actualPowerA = statsTeamA.trueRating + sum(teamA.map(_ => adjustImpact(_.trueRating - statsTeamA.xp)));
+    const actualPowerB = statsTeamB.trueRating + sum(teamB.map(_ => adjustImpact(_.trueRating - statsTeamB.xp)));
 
     const dummyTeamA = ranking4Tmp.makePlayer(actualPowerA, statsTeamA.rd, statsTeamA.vol);
     const dummyTeamB = ranking4Tmp.makePlayer(actualPowerB, statsTeamB.rd, statsTeamB.vol);
@@ -216,8 +227,8 @@ function getMatches(players) {
   const groups = [];
 
   // ***********************
-  return limitRateMatch(players, 500);
-  // return rankSuitMatch(players);
+  return matchAlgo == LimitRateMatch ?
+    limitRateMatch(players, 500) : rankSuitMatch(players);
 
   // 指定したレート範囲でランダムに選ばれたメンバーでマッチングをする
   function limitRateMatch(players, limit) {
@@ -289,9 +300,5 @@ player.history.forEach(set => {
 console.log(`Winning rate: ${toFixedNumber(average(player.history.map(set => set.last().result ? 100 : 0)), 1)}%`);
 console.log(`Max XP: ${toFixedNumber(Math.max(...player.history.map(set => set.last().endXp)), 1)}\tMin XP: ${toFixedNumber(Math.min(...player.history.map(set => set.last().xp)), 1)}`);
 console.log();
-
-function toFixedNumber(v, decimals) {
-  return v.toFixed(decimals);
-}
 
 console.log(player.toString());
