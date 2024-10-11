@@ -25,7 +25,7 @@ function average(array) {
 
 const XpAvg = 2000;
 const PlayerNum = 2000;
-const Sd = 230; // 大体　1000～3000の空間になる。適正3000場合はスプラ2でも当然XP3000を超える。
+const Sd = 240; // 大体　1000～3000の空間になる。適正3000場合はスプラ2でも当然XP3000を超える。
 const Rd = 200;
 const Vol = 0.06;
 const logHistory = true;
@@ -67,18 +67,18 @@ class Player {
 
   battle(myTeam, opponentTeam, expected, isWin) {
     // レート計算の時は、「チームのレート」と「自身のRD,vol」で増減を判断する
-    const myTeamObj = this.ranking.makePlayer(myTeam.xp, this.rd, this.vol);
+    const myTeamObj = this.ranking.makePlayer(this.xp, this.rd, this.vol);
     // 「ranking.updateRatings」では自身のplayerのみ更新処理が実行されるので、レート更新に不要なデータは処理しない領域でplayerを作る
     const opponentTeamObj = ranking4Tmp.makePlayer(opponentTeam.xp, opponentTeam.rd, opponentTeam.vol);
     ranking4Tmp.removePlayers();
     // 後でまとめて差を計算できるように各種パラメーターを追加しておく
-    myTeamObj.xp = myTeam.xp;
+    myTeamObj.xp = this.xp;
     myTeamObj._rd = this.rd;
     myTeamObj._vol = this.vol;
     myTeamObj.expected = expected;
     opponentTeamObj.xp = opponentTeam.xp;
 
-    // 1セットの結果を元にXPを更新する(1セットの間の勝敗でXPは変動させない)
+    // 1セットの結果を元にXPを更新する(1セットの間の勝敗でXP,RD,volは変動させない)
     this.gameResults.push([myTeamObj, opponentTeamObj, isWin]);
     const setStat = Math.abs(sum(this.gameResults.map(_ => (_[2] === 1) ? 1 : -1)));
     if (!isFT3 || setStat >= 3 || (this.gameResults.length >= 4 && setStat >= 2) || (this.gameResults.length >= 5)) {
@@ -105,6 +105,7 @@ class Player {
       );
     }
 
+    // セット終了後、全ての増減を一度に更新する
     const [diffSumXp, diffSumRd, diffSumVol] = this.gameResults.reduce((acc, v) => {
       acc[0] += Number(v[0].getRating() - v[0].xp);
       acc[1] += (v[0].getRd() - v[0]._rd);
@@ -144,14 +145,14 @@ class Player {
 // プレイヤー生成
 const players = range(PlayerNum)
   .map(_ => new Player());
-players.push(new Player(3100)); // 実験用XP3000
+players.push(new Player(3200)); // 実験用XP3000
 
 // let player = players[parseInt(Math.random() * players.length)]; // for debug
 let player = players.sort((a, b) => b.trueRating - a.trueRating)[0];
 console.log(player.toString());
 
 // 試合をまわす
-for (let i = 0; i < 1000; i++) {
+for (let i = 0; i < 2000; i++) {
   let matchGroups = [];
   if (splitRankN > 0 && (players.length > splitRankN)) { // マッチングをN位以内で区切る場合
     players.sort((a, b) => b.xp - a.xp);
@@ -201,14 +202,6 @@ for (let i = 0; i < 1000; i++) {
     const expected = ranking4Tmp.predict(dummyTeamA, dummyTeamB);
     const isWinA = (expected > Math.random()) ? 1 : 0;
     ranking4Tmp.removePlayers();
-
-    // XPの増減も同じように部屋の平均パワーとの差の影響を大きくした式を使う
-    // これは分布から後で変更するかも
-    // 少なくとも、スプラ3でXP5000から-500程度の爆弾を発生させたい
-    // TODO 実際のスプラがどのような計算式を使っているか不明だが、スプラ3のパワー増減から推測すると...
-    const roomAvgXp = (statsTeamA.xp + statsTeamB.xp) / 2;
-    statsTeamA.xp = statsTeamA.xp + Math.sqrt(average(teamA.map(_ => (_.xp - roomAvgXp) * (_.xp - roomAvgXp))));
-    statsTeamB.xp = statsTeamB.xp + Math.sqrt(average(teamB.map(_ => (_.xp - roomAvgXp) * (_.xp - roomAvgXp))));
 
     teamA.forEach(_ => {
       _.battle(statsTeamA, statsTeamB, expected, isWinA);
@@ -269,18 +262,30 @@ function getMatches(players) {
     return groups;
   }
 }
-
 player.history.forEach(set => {
-  if (isFT3) console.log(`[Set: ${set[0].set}] ${set.filter(_ => _.result).length}-${set.filter(_ => !_.result).length} ${set.last().result ? 'Win' : 'Lose'}`);
-  let diffStr = toFixedNumber(set.last().endXp - set[0].xp, 1);
-  diffStr = ((diffStr >= 0 ? '+' : '') + diffStr);
-  console.log(`XP: ${toFixedNumber(set[0].xp, 1)} -> ${toFixedNumber(set.last().endXp, 1)} (${diffStr})\t/ RD:${toFixedNumber(set.last().endRd, 1)} v:${toFixedNumber(set.last().endVol, 2)}`);
-  set.forEach(battle => {
-    console.log(`  ${battle.result ? 'Win ' : 'Lose'}(${toFixedNumber(battle.expected * 100, 0)}%): ${toFixedNumber(battle.teamXp, 1)} vs ${toFixedNumber(battle.opponentXp, 1)} (${(battle.estimateChangeXp > 0 ? '+' : '') + toFixedNumber(battle.estimateChangeXp, 1)})`);
-  });
+  if (!set.last().result) {
+    if (isFT3) console.log(`[Set: ${set[0].set}] ${set.filter(_ => _.result).length}-${set.filter(_ => !_.result).length} ${set.last().result ? 'Win' : 'Lose'}`);
+    let diffStr = toFixedNumber(set.last().endXp - set[0].xp, 1);
+    diffStr = ((diffStr >= 0 ? '+' : '') + diffStr);
+    console.log(`XP: ${toFixedNumber(set[0].xp, 1)} -> ${toFixedNumber(set.last().endXp, 1)} (${diffStr})\t/ RD:${toFixedNumber(set.last().endRd, 1)} v:${toFixedNumber(set.last().endVol, 2)}`);
+    set.forEach(battle => {
+      console.log(`  ${battle.result ? 'Win ' : 'Lose'}(${toFixedNumber(battle.expected * 100, 0)}%): ${toFixedNumber(battle.teamXp, 1)} vs ${toFixedNumber(battle.opponentXp, 1)} (${(battle.estimateChangeXp > 0 ? '+' : '') + toFixedNumber(battle.estimateChangeXp, 1)})`);
+    });
 
-  console.log();
+    console.log();
+  }
 });
+// player.history.forEach(set => {
+//   if (isFT3) console.log(`[Set: ${set[0].set}] ${set.filter(_ => _.result).length}-${set.filter(_ => !_.result).length} ${set.last().result ? 'Win' : 'Lose'}`);
+//   let diffStr = toFixedNumber(set.last().endXp - set[0].xp, 1);
+//   diffStr = ((diffStr >= 0 ? '+' : '') + diffStr);
+//   console.log(`XP: ${toFixedNumber(set[0].xp, 1)} -> ${toFixedNumber(set.last().endXp, 1)} (${diffStr})\t/ RD:${toFixedNumber(set.last().endRd, 1)} v:${toFixedNumber(set.last().endVol, 2)}`);
+//   set.forEach(battle => {
+//     console.log(`  ${battle.result ? 'Win ' : 'Lose'}(${toFixedNumber(battle.expected * 100, 0)}%): ${toFixedNumber(battle.teamXp, 1)} vs ${toFixedNumber(battle.opponentXp, 1)} (${(battle.estimateChangeXp > 0 ? '+' : '') + toFixedNumber(battle.estimateChangeXp, 1)})`);
+//   });
+
+//   console.log();
+// });
 console.log(`Winning rate: ${toFixedNumber(average(player.history.map(set => set.last().result ? 100 : 0)), 1)}%`);
 console.log(`Max XP: ${toFixedNumber(Math.max(...player.history.map(set => set.last().endXp)), 1)}\tMin XP: ${toFixedNumber(Math.min(...player.history.map(set => set.last().xp)), 1)}`);
 console.log();
