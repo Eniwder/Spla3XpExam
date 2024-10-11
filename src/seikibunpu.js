@@ -38,7 +38,7 @@ const splitXp2000 = true;
 const isGuarantee = true;
 const isFT3 = true;
 const countStop = 3000;
-const positiveImpactFactor = 1.5;  // 平均より強いプレイヤーの影響度 TODO このへんは、スプラ2の方式でXP3100のプレイヤーがスプラ3の方式でXP5000になるよう調整する
+const positiveImpactFactor = 0.7;  // 平均より強いプレイヤーの影響度 TODO このへんは、スプラ2の方式でXP3100のプレイヤーがスプラ3の方式でXP5000になるよう調整する
 const negativeImpactFactor = 0.3;  // 平均より弱いプレイヤーの影響度
 const LimitRateMatch = "limitRateMatch";
 const matchAlgo = LimitRateMatch;
@@ -205,8 +205,8 @@ for (let i = 0; i < 2000; i++) {
       ? positiveImpactFactor * Math.sqrt(ratingDifference * ratingDifference)
       : -negativeImpactFactor * Math.sqrt(ratingDifference * ratingDifference);
 
-    const actualPowerA = statsTeamA.trueRating + sum(teamA.map(_ => adjustImpact(_.trueRating - statsTeamA.xp)));
-    const actualPowerB = statsTeamB.trueRating + sum(teamB.map(_ => adjustImpact(_.trueRating - statsTeamB.xp)));
+    const actualPowerA = statsTeamA.trueRating + sum(teamA.map(_ => adjustImpact(_.trueRating - statsTeamA.trueRating)));
+    const actualPowerB = statsTeamB.trueRating + sum(teamB.map(_ => adjustImpact(_.trueRating - statsTeamB.trueRating)));
 
     const dummyTeamA = ranking4Tmp.makePlayer(actualPowerA, statsTeamA.rd, statsTeamA.vol);
     const dummyTeamB = ranking4Tmp.makePlayer(actualPowerB, statsTeamB.rd, statsTeamB.vol);
