@@ -42,14 +42,12 @@ const positiveImpactFactor = 0.3;  // 平均より強いプレイヤーの影響
 const negativeImpactFactor = 0.2;  // 平均より弱いプレイヤーの影響度
 const LimitRateMatch = "limitRateMatch";
 const matchAlgo = LimitRateMatch;
-const targetPlayerRate = 2200;
+const targetPlayerRate = 3200;
 
-const ranking4Tmp = new Glicko2({
-  tau: defaultTau,
-  rating: XpAvg,
-  rd: defaultRd,
-  vol: defaultVol,
-});
+const ranking = new Glicko2({ tau: defaultTau, rating: XpAvg, rd: defaultRd, vol: defaultVol });
+const ranking4Tmp = new Glicko2({ tau: defaultTau, rating: XpAvg, rd: defaultRd, vol: defaultVol });
+const teamPool = range(5).map(_ => [ranking.makePlayer(), ranking.makePlayer()]);
+const predictPool = range(2).map(_ => ranking4Tmp.makePlayer());
 
 class Player {
   constructor(trueRating) {
@@ -60,12 +58,6 @@ class Player {
     this.vol = defaultVol; // ボラティリティ
     this.gameResults = [];
     this.history = [];
-    this.ranking = new Glicko2({
-      tau: defaultTau,
-      rating: XpAvg,
-      rd: defaultRd,
-      vol: defaultVol,
-    });
   }
 
   toString() {
@@ -74,43 +66,60 @@ class Player {
   RD: ${toFixedNumber(this.rd, 1)} vol: ${toFixedNumber(this.vol, 2)}`;
   }
 
-  battle(myTeam, opponentTeam, expected, isWin) {
+  battle(myTeam, opponentTeam) {
     // TODO レート計算の時は、「自身のXP、RD,vol」で増減を判断する。(実際の分布で試すまで未定)
     // 普通に考えるとチームの平均XPで増減を決める方が公平だが、スプラ3でXP5000から[2-3]のスコアで-600などを再現しようとすると、
     // RDを180くらいに高める必要があり、そのためには個人のXPで計算しないと辻褄が合わない。　
-    const myTeamObj = this.ranking.makePlayer(this.xp, this.rd, this.vol);
-    // 「ranking.updateRatings」では自身のplayerのみ更新処理が実行されるので、レート更新に不要なデータは処理しない領域でplayerを作る
-    const opponentTeamObj = ranking4Tmp.makePlayer(opponentTeam.xp, opponentTeam.rd, opponentTeam.vol);
-    ranking4Tmp.removePlayers();
+
     // 後でまとめて差を計算できるように各種パラメーターを追加しておく
-    myTeamObj.xp = myTeam.xp;
-    myTeamObj.myXp = this.xp;
-    myTeamObj.myRd = this.rd;
-    myTeamObj.myVol = this.vol;
-    myTeamObj.expected = expected;
-    opponentTeamObj.xp = opponentTeam.xp;
+    myTeam.xp = myTeam.xp;
+    myTeam.myXp = this.xp;
+    myTeam.myRd = this.rd;
+    myTeam.myVol = this.vol;
 
     // 1セットの結果を元にXPを更新する(1セットの間の勝敗でXP,RD,volは変動させない)
-    this.gameResults.push([myTeamObj, opponentTeamObj, isWin]);
-    const setStat = Math.abs(sum(this.gameResults.map(_ => (_[2] === 1) ? 1 : -1)));
-    if (!isFT3 || setStat >= 3 || (this.gameResults.length >= 4 && setStat >= 2) || (this.gameResults.length >= 5)) {
+    this.gameResults.push([myTeam, opponentTeam]);
+
+    if (isFinishSet(this.gameResults)) {
       this.finishSet();
+    }
+
+    function isFinishSet(gameResults) {
+      if (!isFT3) return true;
+      const scoreDiff = Math.abs(sum(gameResults.map(_ => !!_[0].isWin ? 1 : -1)));
+      return (gameResults.length + scoreDiff) >= 6; // 3試合先取の場合、(試合数+勝敗の差)が6以上でセット終了と判断できる
     }
   }
 
   finishSet() {
-    this.ranking.updateRatings(this.gameResults);
-    if (logHistory) {
+    const gameResult4Stats = this.gameResults.map((team, idx) => {
+      teamPool[idx][0].setRating(team[0].myXp);
+      teamPool[idx][0].setRd(team[0].myRd);
+      teamPool[idx][0].setVol(team[0].myVol);
+      teamPool[idx][1].setRating(team[1].xp);
+      teamPool[idx][1].setRd(team[1].rd);
+      teamPool[idx][1].setVol(team[1].vol);
+      return [teamPool[idx][0], teamPool[idx][1], team[0].isWin];
+    });
+    ranking.updateRatings(gameResult4Stats);
+
+    gameResult4Stats.forEach((_, idx) => {
+      this.gameResults[idx][0].nextXp = _[0].getRating();
+      this.gameResults[idx][0].nextRd = _[0].getRd();
+      this.gameResults[idx][0].nextVol = _[0].getVol();
+    });
+
+    if (logHistory && this.id === targetPlayer.id) {
       this.history.push(
-        this.gameResults.map((battle, idx) => ({
-          set: this.history.length,
+        this.gameResults.map((team, idx) => ({
+          setIdx: this.history.length,
           round: idx,
           xp: this.xp,
-          teamXp: battle[0].xp,
-          opponentXp: battle[1].xp,
-          expected: battle[0].expected,
-          result: !!battle[2],
-          estimateChangeXp: battle[0].getRating() - battle[0].myXp,
+          teamXp: team[0].xp,
+          opponentXp: team[1].xp,
+          expected: team[0].expected,
+          result: !!team[0].isWin,
+          estimateChangeXp: (team[0].nextXp - team[0].myXp),
           rd: this.rd,
           vol: this.vol,
         }))
@@ -118,19 +127,18 @@ class Player {
     }
 
     // セット終了後、全ての増減を一度に更新する
-    const [diffSumXp, diffSumRd, diffSumVol] = this.gameResults.reduce((acc, v) => {
-      acc[0] += v[0].getRating() - v[0].myXp;
-      acc[1] += v[0].getRd() - v[0].myRd;
-      acc[2] += v[0].getVol() - v[0].myVol;
+    const [diffSumXp, diffSumRd, diffSumVol, scoreDiff] = this.gameResults.reduce((acc, v) => {
+      acc[0] += (v[0].nextXp - v[0].myXp);
+      acc[1] += (v[0].nextRd - v[0].myRd);
+      acc[2] += (v[0].nextVol - v[0].myVol);
+      acc[3] += (v[0].isWin ? 1 : -1); // 勝ち越しでプラス、負け越しでマイナス
       return acc;
-    }, [0, 0, 0]);
+    }, [0, 0, 0, 0]);
 
-    const winNum = this.gameResults.filter(_ => _[2]).length - this.gameResults.filter(_ => !_[2]).length;
-    this.xp = Math.max(500, this.xp + this.getAddXp(winNum, diffSumXp)); // XPの最低値は500(スプラ3の仕様)
+    this.xp = Math.max(500, this.xp + this.getAddXp(scoreDiff, diffSumXp)); // XPの最低値は500(スプラ3の仕様)
     this.rd = toInRange(50, this.rd + diffSumRd, 350); // RDは50～350の範囲とする。明確な根拠は無いが、基本的にこの範囲を超えることはない。
     this.vol += diffSumVol;
-
-    if (logHistory) {
+    if (logHistory && this.id === targetPlayer.id) {
       const lastItem = this.history.last().last();
       lastItem.endXp = this.xp;
       lastItem.endRd = this.rd;
@@ -138,16 +146,15 @@ class Player {
     }
 
     this.gameResults = [];
-    this.ranking.removePlayers();
   }
 
-  getAddXp(winNum, diffSum) {
-    const addXpByRate = (this.xp < 2500) ? winNum * 25 :
-      (this.xp < 3000) ? winNum * 15 :
-        winNum * 5 + ((winNum > 0 ? 1 : -1) * 5);
+  getAddXp(scoreDiff, diffSum) {
+    const addXpByRate = (this.xp < 2500) ? scoreDiff * 25 :
+      (this.xp < 3000) ? scoreDiff * 15 :
+        scoreDiff * 5 + ((scoreDiff > 0 ? 1 : -1) * 5);
 
     return !isGuarantee ? diffSum : // 最低保障が無いなら単純に試合ごとの増減を加算する
-      winNum < 0 ? Math.min(diffSum, addXpByRate) : // 最低保証がある場合は、「最低保証or単純XP増減」のうち、より変化の大きい方を採用する
+      scoreDiff < 0 ? Math.min(diffSum, addXpByRate) : // 最低保証がある場合は、「最低保証or単純XP増減」のうち、より変化の大きい方を採用する
         Math.max(diffSum, addXpByRate);
   }
 }
@@ -164,7 +171,7 @@ players.push(targetPlayer);
 console.log(targetPlayer.toString());
 
 // 試合をまわす
-for (let i = 0; i < 2000; i++) {
+for (let i = 0; i < 1500; i++) {
   let matchGroups = [];
   if (splitRankN > 0 && (players.length > splitRankN)) { // マッチングをN位以内で区切る場合
     players.sort((a, b) => b.xp - a.xp);
@@ -191,19 +198,19 @@ for (let i = 0; i < 2000; i++) {
     } else {
       _.shuffle();
     }
-    teamA.push(_[0], _[2], _[4], _[6]);
-    teamB.push(_[1], _[3], _[5], _[7]);
+    teamA.push(_[0], _[3], _[4], _[7]);
+    teamB.push(_[1], _[2], _[5], _[6]);
     // glicko2は1vs1で対戦するレーティングシステムのため、各チームの平均ステータスを持つ仮想プレイヤーを作成して計算をする
     const statsTeamA = {
       trueRating: average(teamA.map(_ => _.trueRating)),
       xp: average(teamA.map(_ => _.xp)),
-      rd: toInRange(50, average(teamA.map(_ => _.rd)), 350),
+      rd: average(teamA.map(_ => _.rd)),
       vol: average(teamA.map(_ => _.vol))
     };
     const statsTeamB = {
       trueRating: average(teamB.map(_ => _.trueRating)),
       xp: average(teamB.map(_ => _.xp)),
-      rd: toInRange(50, average(teamB.map(_ => _.rd)), 350),
+      rd: average(teamB.map(_ => _.rd)),
       vol: average(teamB.map(_ => _.vol))
     };
 
@@ -211,23 +218,30 @@ for (let i = 0; i < 2000; i++) {
     // 勝敗は部屋の平均パワーから離れているプレイヤーの影響を大きくする
     // 例えば極端に弱いプレイヤーがいるチームは負けやすくなり、極端に強いプレイヤーがいるほうが勝ちやすくなる
     const adjustImpact = ratingDifference => ratingDifference >= 0
-      ? positiveImpactFactor * Math.sqrt(ratingDifference * ratingDifference)
-      : -negativeImpactFactor * Math.sqrt(ratingDifference * ratingDifference);
+      ? positiveImpactFactor * ratingDifference : -negativeImpactFactor * ratingDifference;
 
     const actualPowerA = statsTeamA.trueRating + sum(teamA.map(_ => adjustImpact(_.trueRating - statsTeamA.trueRating)));
     const actualPowerB = statsTeamB.trueRating + sum(teamB.map(_ => adjustImpact(_.trueRating - statsTeamB.trueRating)));
 
-    const dummyTeamA = ranking4Tmp.makePlayer(actualPowerA, statsTeamA.rd, statsTeamA.vol);
-    const dummyTeamB = ranking4Tmp.makePlayer(actualPowerB, statsTeamB.rd, statsTeamB.vol);
-    const expected = ranking4Tmp.predict(dummyTeamA, dummyTeamB);
+    predictPool[0].setRating(actualPowerA);
+    predictPool[0].setRd(statsTeamA.rd);
+    predictPool[0].setVol(statsTeamA.vol);
+    predictPool[1].setRating(actualPowerB);
+    predictPool[1].setRd(statsTeamB.rd);
+    predictPool[1].setVol(statsTeamB.vol);
+
+    const expected = ranking4Tmp.predict(predictPool[0], predictPool[1]);
     const isWinA = (expected > Math.random()) ? 1 : 0;
-    ranking4Tmp.removePlayers();
+    statsTeamA.expected = expected;
+    statsTeamA.isWin = isWinA;
+    statsTeamB.expected = 1 - expected;
+    statsTeamB.isWin = 1 - isWinA;
 
     teamA.forEach(_ => {
-      _.battle(statsTeamA, statsTeamB, expected, isWinA);
+      _.battle(statsTeamA, statsTeamB);
     });
     teamB.forEach(_ => {
-      _.battle(statsTeamB, statsTeamA, 1 - expected, 1 - isWinA);
+      _.battle(statsTeamB, statsTeamA);
     });
   });
 }
@@ -284,7 +298,7 @@ function getMatches(players) {
 }
 targetPlayer.history.forEach(set => {
   if (!set.last().result) {
-    if (isFT3) console.log(`[Set: ${set[0].set}] ${set.filter(_ => _.result).length}-${set.filter(_ => !_.result).length} ${set.last().result ? 'Win' : 'Lose'}`);
+    if (isFT3) console.log(`[Set: ${set[0].setIdx}] ${set.filter(_ => _.result).length}-${set.filter(_ => !_.result).length} ${set.last().result ? 'Win' : 'Lose'}`);
     let diffStr = toFixedNumber(set.last().endXp - set[0].xp, 1);
     diffStr = ((diffStr >= 0 ? '+' : '') + diffStr);
     console.log(`XP: ${toFixedNumber(set[0].xp, 1)} -> ${toFixedNumber(set.last().endXp, 1)} (${diffStr})\t/ RD:${toFixedNumber(set.last().endRd, 1)} v:${toFixedNumber(set.last().endVol, 2)}`);

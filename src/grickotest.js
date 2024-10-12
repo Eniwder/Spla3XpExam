@@ -24,8 +24,8 @@ const ranking = new Glicko2({
 });
 
 // Create players
-const xp = 8000;
-const Ryan = ranking.makePlayer(xp, 100, 0.06);
+const xp = 4063;
+const Ryan = ranking.makePlayer(xp, 50, 0.16);
 const Bob = ranking.makePlayer(4063, 50, 0.06);
 const John = ranking.makePlayer(1550, 100, 0.06);
 const Mary = ranking.makePlayer(1700, 300, 0.06);
@@ -36,15 +36,19 @@ const matches = [];
 // matches.push([Ryan, Bob, 1]); //Ryan won over Bob
 // matches.push([Ryan, Bob, 1]); //Ryan won over Bob
 // matches.push([Ryan, Bob, 0]); //Ryan won over Bob
-// matches.push([Ryan, Bob, 0]); //Ryan won over Bob
-// matches.push([Ryan, Bob, 0]); //Ryan won over Bob
 matches.push([Ryan, Bob, 0]); //Ryan won over Bob
+// matches.push([Ryan, Bob, 0]); //Ryan won over Bob
+// matches.push([Ryan, Bob, 0]); //Ryan won over Bob
 
 // matches.push([Ryan, John, 0]); //Ryan lost against John
 // matches.push([Ryan, Mary, 0.5]); //A draw between Ryan and Mary
 // matches.push([John, Mary, 1]); //A draw between Ryan and Mary
 
+// ranking.updateRatings(matches);
 ranking.updateRatings(matches);
+// ranking.updateRatings(matches);
+// ranking.updateRatings(matches);
+
 
 console.log("Ryan new rating: " + toFixedNumber(Ryan.getRating(), 1) + "\t" + toFixedNumber(Ryan.getRating() - xp, 1));
 console.log("Ryan new rating deviation: " + Ryan.getRd());
