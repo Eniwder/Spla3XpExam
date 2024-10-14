@@ -40,9 +40,11 @@ const fairSplitTeam = false;
 const countStop = 3000;
 const positiveImpactFactor = 0.3;  // 平均より強いプレイヤーの影響度 TODO このへんは、スプラ2の方式でXP3100のプレイヤーがスプラ3の方式でXP5000になるよう調整する
 const negativeImpactFactor = 0.2;  // 平均より弱いプレイヤーの影響度
+const dropRate = 0.005; // 回線落ちの確率。片方が確定で勝つ仕様とする
+const performanceBias = 5; // 最大±N%の「上振れと下振れ」のしやすさ能力を表す。0に近いほど常に安定感があるとする。
 const LimitRateMatch = "limitRateMatch";
 const matchAlgo = LimitRateMatch;
-const targetPlayerRate = 3200;
+const targetPlayerRate = 3000;
 
 const ranking = new Glicko2({ tau: defaultTau, rating: XpAvg, rd: defaultRd, vol: defaultVol });
 const ranking4Tmp = new Glicko2({ tau: defaultTau, rating: XpAvg, rd: defaultRd, vol: defaultVol });
@@ -56,13 +58,14 @@ class Player {
     this.xp = XpAvg + (this.trueRating - XpAvg) * 0.5;     // プレイヤーのスプラ3レーティング。実際のレーティングに少し近い値を入れておく
     this.rd = defaultRd; // レーティングの不確実性
     this.vol = defaultVol; // ボラティリティ
+    this.performanceBias = (Math.random() * performanceBias) / 100; // 0 ~ bias
     this.gameResults = [];
     this.history = [];
   }
 
   toString() {
     return `ID: ${this.id}
-  XP: ${toFixedNumber(this.xp, 1)}\tTRate: ${toFixedNumber(this.trueRating, 1)}
+  XP: ${toFixedNumber(this.xp, 1)}\tTRate: ${toFixedNumber(this.trueRating, 1)}\tBias: ${toFixedNumber(this.performanceBias, 3)}
   RD: ${toFixedNumber(this.rd, 1)} vol: ${toFixedNumber(this.vol, 2)}`;
   }
 
@@ -72,10 +75,8 @@ class Player {
     // RDを180くらいに高める必要があり、そのためには個人のXPで計算しないと辻褄が合わない。　
 
     // 後でまとめて差を計算できるように各種パラメーターを追加しておく
-    myTeam.xp = myTeam.xp;
-    myTeam.myXp = this.xp;
-    myTeam.myRd = this.rd;
-    myTeam.myVol = this.vol;
+    // myTeam.myXp = this.xp; 仮に自分のXPを保存する必要が出た場合、単純にmyTeamにプロパティを追加すると競合する点に注意
+
 
     // 1セットの結果を元にXPを更新する(1セットの間の勝敗でXP,RD,volは変動させない)
     this.gameResults.push([myTeam, opponentTeam]);
@@ -93,9 +94,9 @@ class Player {
 
   finishSet() {
     const gameResult4Stats = this.gameResults.map((team, idx) => {
-      teamPool[idx][0].setRating(team[0].myXp);
-      teamPool[idx][0].setRd(team[0].myRd);
-      teamPool[idx][0].setVol(team[0].myVol);
+      teamPool[idx][0].setRating(this.xp);
+      teamPool[idx][0].setRd(this.rd);
+      teamPool[idx][0].setVol(this.vol);
       teamPool[idx][1].setRating(team[1].xp);
       teamPool[idx][1].setRd(team[1].rd);
       teamPool[idx][1].setVol(team[1].vol);
@@ -119,7 +120,7 @@ class Player {
           opponentXp: team[1].xp,
           expected: team[0].expected,
           result: !!team[0].isWin,
-          estimateChangeXp: (team[0].nextXp - team[0].myXp),
+          estimateChangeXp: (team[0].nextXp - this.xp),
           rd: this.rd,
           vol: this.vol,
         }))
@@ -128,9 +129,9 @@ class Player {
 
     // セット終了後、全ての増減を一度に更新する
     const [diffSumXp, diffSumRd, diffSumVol, scoreDiff] = this.gameResults.reduce((acc, v) => {
-      acc[0] += (v[0].nextXp - v[0].myXp);
-      acc[1] += (v[0].nextRd - v[0].myRd);
-      acc[2] += (v[0].nextVol - v[0].myVol);
+      acc[0] += (v[0].nextXp - this.xp);
+      acc[1] += (v[0].nextRd - this.rd);
+      acc[2] += (v[0].nextVol - this.vol);
       acc[3] += (v[0].isWin ? 1 : -1); // 勝ち越しでプラス、負け越しでマイナス
       return acc;
     }, [0, 0, 0, 0]);
@@ -190,29 +191,22 @@ for (let i = 0; i < 1500; i++) {
   const groups = matchGroups.flatMap(_ => getMatches(_));
 
   groups.forEach(_ => {
-    // TODO チーム分けも設定できるようにする
-    const teamA = [];
-    const teamB = [];
+    const teams = [[], []];
     if (fairSplitTeam) {
-      _.sort((a, b) => a.xp - b.xp);
+      _.sort((a, b) => Math.min(a.xp) - Math.min(b.xp));
     } else {
       _.shuffle();
     }
-    teamA.push(_[0], _[3], _[4], _[7]);
-    teamB.push(_[1], _[2], _[5], _[6]);
+    teams[0].push(_[0], _[3], _[4], _[7]);
+    teams[1].push(_[1], _[2], _[5], _[6]);
     // glicko2は1vs1で対戦するレーティングシステムのため、各チームの平均ステータスを持つ仮想プレイヤーを作成して計算をする
-    const statsTeamA = {
-      trueRating: average(teamA.map(_ => _.trueRating)),
-      xp: average(teamA.map(_ => _.xp)),
-      rd: average(teamA.map(_ => _.rd)),
-      vol: average(teamA.map(_ => _.vol))
-    };
-    const statsTeamB = {
-      trueRating: average(teamB.map(_ => _.trueRating)),
-      xp: average(teamB.map(_ => _.xp)),
-      rd: average(teamB.map(_ => _.rd)),
-      vol: average(teamB.map(_ => _.vol))
-    };
+    const teamsWithStats = teams.map(team => ({
+      // 真の実力は±N%のブレが存在すると考えて計算する。ブレはプレイヤーによって異なる。
+      trueRating: average(team.map(_ => _.trueRating * (1 + _.performanceBias * 2 * Math.random() - _.performanceBias))),
+      xp: average(team.map(_ => _.xp)),
+      rd: average(team.map(_ => _.rd)),
+      vol: average(team.map(_ => _.vol)),
+    }));
 
     // スプラ3のXPではなく内部レート(真の実力と仮定)を元に勝率を計算する
     // 勝敗は部屋の平均パワーから離れているプレイヤーの影響を大きくする
@@ -220,29 +214,38 @@ for (let i = 0; i < 1500; i++) {
     const adjustImpact = ratingDifference => ratingDifference >= 0
       ? positiveImpactFactor * ratingDifference : -negativeImpactFactor * ratingDifference;
 
-    const actualPowerA = statsTeamA.trueRating + sum(teamA.map(_ => adjustImpact(_.trueRating - statsTeamA.trueRating)));
-    const actualPowerB = statsTeamB.trueRating + sum(teamB.map(_ => adjustImpact(_.trueRating - statsTeamB.trueRating)));
-
-    predictPool[0].setRating(actualPowerA);
-    predictPool[0].setRd(statsTeamA.rd);
-    predictPool[0].setVol(statsTeamA.vol);
-    predictPool[1].setRating(actualPowerB);
-    predictPool[1].setRd(statsTeamB.rd);
-    predictPool[1].setVol(statsTeamB.vol);
+    teamsWithStats.forEach((team, idx) => {
+      team.actualPower = team.trueRating + sum(teams[idx].map(_ => adjustImpact(_.trueRating - team.trueRating)));
+      predictPool[idx].setRating(team.actualPower);
+      predictPool[idx].setRd(team.rd);
+      predictPool[idx].setVol(team.vol);
+    });
 
     const expected = ranking4Tmp.predict(predictPool[0], predictPool[1]);
-    const isWinA = (expected > Math.random()) ? 1 : 0;
-    statsTeamA.expected = expected;
-    statsTeamA.isWin = isWinA;
-    statsTeamB.expected = 1 - expected;
-    statsTeamB.isWin = 1 - isWinA;
+    const judge = (expected > Math.random()) ? 1 : 0;
 
-    teamA.forEach(_ => {
-      _.battle(statsTeamA, statsTeamB);
+    teamsWithStats[0].expected = expected;
+    teamsWithStats[1].expected = 1 - expected;
+    teamsWithStats[0].isWin = judge;
+    teamsWithStats[1].isWin = 1 - judge;
+
+    // 回線落ちが発生したら片方が勝ち、片方は何も起きなかった状態にする
+    if (dropRate > Math.random()) {
+      const winTeamIdx = Math.random() > 0.5 ? 0 : 1;
+      teams[winTeamIdx].expected = -1;
+      teams[winTeamIdx].isWin = 1;
+      teams[winTeamIdx].forEach(player => {
+        player.battle(teamsWithStats[winTeamIdx - 0], teamsWithStats[1 - winTeamIdx]);
+      });
+      return;
+    }
+
+    teams.forEach((team, idx) => {
+      team.forEach(player => {
+        player.battle(teamsWithStats[idx - 0], teamsWithStats[1 - idx]);
+      });
     });
-    teamB.forEach(_ => {
-      _.battle(statsTeamB, statsTeamA);
-    });
+
   });
 }
 
@@ -289,7 +292,6 @@ function getMatches(players) {
   function rankSuitMatch(players) {
     players.sort((a, b) => b.xp - a.xp);
     // 最下位付近は試合できない人が出てくるけど許容
-    // console.log(players.length, parseInt(players.length / 8));
     for (let i = 0, max = parseInt(players.length / 8); i < max; i++) {
       groups.push(players.slice(i * 8, (i + 1) * 8));
     }

@@ -5,16 +5,17 @@
  */
 
 // Plugins
-import { registerPlugins } from '@/plugins'
+import { registerPlugins } from '@/plugins';
 
 // Components
-import App from './App.vue'
-
+import App from './App.vue';
+import i18n from "./i18n";
 // Composables
-import { createApp } from 'vue'
+import { createApp } from 'vue';
 
-const app = createApp(App)
+const app = createApp(App);
 
-registerPlugins(app)
+registerPlugins(app);
+app.use(i18n);
 
-app.mount('#app')
+app.mount('#app');

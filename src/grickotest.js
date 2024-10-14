@@ -24,9 +24,9 @@ const ranking = new Glicko2({
 });
 
 // Create players
-const xp = 4063;
+const xp = 2548;
 const Ryan = ranking.makePlayer(xp, 50, 0.16);
-const Bob = ranking.makePlayer(4063, 50, 0.06);
+const Bob = ranking.makePlayer(2500, 50, 0.06);
 const John = ranking.makePlayer(1550, 100, 0.06);
 const Mary = ranking.makePlayer(1700, 300, 0.06);
 
@@ -45,6 +45,7 @@ matches.push([Ryan, Bob, 0]); //Ryan won over Bob
 // matches.push([John, Mary, 1]); //A draw between Ryan and Mary
 
 // ranking.updateRatings(matches);
+console.log(ranking.predict(Ryan, Bob));
 ranking.updateRatings(matches);
 // ranking.updateRatings(matches);
 // ranking.updateRatings(matches);
