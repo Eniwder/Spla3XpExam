@@ -7,7 +7,7 @@ export class Xmatch {
 
   static processSpla2Match(players) {
     const matchGroups = getMatchGroups(players, 0, 0);
-    const groups = matchGroups.flatMap(_ => getMatches(_, Xmatch.LimitRateMatch, 300, 10000));
+    const groups = matchGroups.flatMap(_ => getMatches(_, Xmatch.Se, 300, 10000));
     groups.forEach(grp => {
       const teams = group2Team(grp, Math.random() > 0.5);
       executeMatch(teams, { gameVer: Player.Spla2, isFT3: false, isGuarantee: false, connectionErrorRate: 0.5 });
@@ -157,7 +157,7 @@ function getMatches(players, matchAlgo, limitRateDiff) {
   }
 
   // 上位から8人ずつマッチングしていく
-  function sequencialMath(players) {
+  function sequentialMath(players) {
     players.sort((a, b) => b.xp - a.xp);
     // 最下位付近は試合できない人が出てくるけど許容
     for (let i = 0, max = parseInt(players.length / 8); i < max; i++) {
