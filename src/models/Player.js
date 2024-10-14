@@ -2,9 +2,7 @@ import { Glicko2 } from 'glicko2';
 const logHistory = false; // TODO
 
 export class Player {
-  static Spla2 = 0;
-  static Spla3 = 1;
-  static Custom = 2;
+
   static ranking = null;
   static teamPool = null;
 
