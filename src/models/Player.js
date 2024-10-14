@@ -76,7 +76,7 @@ export class Player {
         this.gameResults[gameVer].map((team, idx) => ({
           setIdx: this.history.length,
           round: idx,
-          xp: this.xp,
+          xp: this.xps[gameVer],
           teamXp: team[0].xp,
           opponentXp: team[1].xp,
           expected: team[0].expected,
@@ -97,8 +97,8 @@ export class Player {
       return acc;
     }, [0, 0, 0, 0]);
 
-    this.xps[gameVer] = Math.max(500, this.xp + getAddXp(this.xps[gameVer], scoreDiff, diffSumXp, isGuarantee)); // XPの最低値は500(スプラ3の仕様)
-    this.rds[gameVer] = toInRange(50, this.rd + diffSumRd, 350); // RDは50～350の範囲とする。明確な根拠は無いが、基本的にこの範囲を超えることはない。
+    this.xps[gameVer] = Math.max(500, this.xps[gameVer] + getAddXp(this.xps[gameVer], scoreDiff, diffSumXp, isGuarantee)); // XPの最低値は500(スプラ3の仕様)
+    this.rds[gameVer] = toInRange(50, this.rds[gameVer] + diffSumRd, 350); // RDは50～350の範囲とする。明確な根拠は無いが、基本的にこの範囲を超えることはない。
     this.vols[gameVer] += diffSumVol;
     if (logHistory && this.id === targetPlayer.id) {
       const lastItem = this.history.last().last();
