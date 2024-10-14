@@ -146,10 +146,8 @@
 <script setup>
 import { computed, nextTick, onMounted, reactive, ref, watch, provide, shallowRef } from 'vue';
 import { use, registerTransform } from 'echarts/core';
-// import * as echarts from 'echarts';
 import { CanvasRenderer } from 'echarts/renderers';
 import { BarChart, PieChart } from 'echarts/charts';
-import { transform } from 'echarts-stat';
 import { useTheme } from 'vuetify';
 import VChart, { THEME_KEY } from 'vue-echarts';
 
@@ -180,14 +178,13 @@ use([
   ToolboxComponent,
   TransformComponent,
 ]);
-registerTransform(transform.histogram);
 provide(THEME_KEY, theme.global.current.value.dark ? 'dark' : 'light');
 import { Player } from './models/Player.js';
 import { Xmatch } from './models/Xmatch.js';
 
 const LimitRateMatch = Xmatch.LimitRateMatch;
-const SequentialMath = Xmatch.SequentialMath;
-const MatchAlgos = [LimitRateMatch, SequentialMath].map(_ => ({ label: t('matchConfig.' + _), v: _ }));
+const SequentialMatch = Xmatch.SequentialMatch;
+const MatchAlgos = [LimitRateMatch, SequentialMatch].map(_ => ({ label: t('matchConfig.' + _), v: _ }));
 
 const Defaults = {
   powerAvg: 2000,
@@ -314,6 +311,7 @@ function createPlayersWithChart() {
     barOption.series[0].data = [];
     barOption.xAxis.data = [];
     players.length = 0;
+    Player.init({ tau: ratingParam.tau, rating: playersStats.powerAvg, rd: ratingParam.rd, vol: ratingParam.vol });
   }
 
   function updatePlayersSummary(playersData) {
@@ -379,14 +377,12 @@ function createPlayers(playersStats, ratingParam) {
 
 
 function startBattleSimulate() {
-  const { isGuarantee, isFT3, } = ratingParam;
-  const { splitRankN, splitXpN, matchAlgo, mathLimitRate, fairSplitTeam, countStop, connectionErrorRate, matchNum, } = matchConfig;
-  const { positiveImpactFactor, negativeImpactFactor } = battleBalance;
+  Xmatch.init({ tau: ratingParam.tau, rating: playersStats.powerAvg, rd: ratingParam.rd, vol: ratingParam.vol });
 
-  for (let i = 0; i < matchNum; i++) {
+  for (let i = 0; i < matchConfig.matchNum; i++) {
     Xmatch.processSpla2Match(players);
     // Xmatch.processSpla3Match(players);
-    // Xmatch.processCutomMatch(players, matchConfig, ratingParam);
+    // Xmatch.processCutomMatch(players, matchConfig, ratingParam, battleBalance);
   }
 
 

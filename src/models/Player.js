@@ -1,7 +1,17 @@
+import { Glicko2 } from 'glicko2';
+const logHistory = false; // TODO
+
 export class Player {
   static Spla2 = 0;
   static Spla3 = 1;
   static Custom = 2;
+  static ranking = null;
+  static teamPool = null;
+
+  static init(glicko2Settings) {
+    Player.ranking = new Glicko2(glicko2Settings);
+    Player.teamPool = range(5).map(_ => [Player.ranking.makePlayer(), Player.ranking.makePlayer()]);
+  }
 
   constructor(id, trueRating, xp, rd, vol, performanceBias) {
     this.id = id;//crypto.randomUUID();
@@ -45,15 +55,15 @@ export class Player {
 
   finishSet(gameVer, isGuarantee) {
     const gameResult4Stats = this.gameResults[gameVer].map((team, idx) => {
-      teamPool[idx][0].setRating(this.xps[gameVer]);
-      teamPool[idx][0].setRd(this.rds[gameVer]);
-      teamPool[idx][0].setVol(this.vols[gameVer]);
-      teamPool[idx][1].setRating(team[1].xp);
-      teamPool[idx][1].setRd(team[1].rd);
-      teamPool[idx][1].setVol(team[1].vol);
-      return [teamPool[idx][0], teamPool[idx][1], team[0].isWin];
+      Player.teamPool[idx][0].setRating(this.xps[gameVer]);
+      Player.teamPool[idx][0].setRd(this.rds[gameVer]);
+      Player.teamPool[idx][0].setVol(this.vols[gameVer]);
+      Player.teamPool[idx][1].setRating(team[1].xp);
+      Player.teamPool[idx][1].setRd(team[1].rd);
+      Player.teamPool[idx][1].setVol(team[1].vol);
+      return [Player.teamPool[idx][0], Player.teamPool[idx][1], team[0].isWin];
     });
-    ranking.updateRatings(gameResult4Stats);
+    Player.ranking.updateRatings(gameResult4Stats);
 
     gameResult4Stats.forEach((_, idx) => {
       this.gameResults[gameVer][idx][0].nextXp = _[0].getRating();
@@ -63,7 +73,7 @@ export class Player {
 
     if (logHistory && this.id === targetPlayer.id) {
       this.history.push(
-        this.gameResults.map((team, idx) => ({
+        this.gameResults[gameVer].map((team, idx) => ({
           setIdx: this.history.length,
           round: idx,
           xp: this.xp,
@@ -89,7 +99,7 @@ export class Player {
 
     this.xps[gameVer] = Math.max(500, this.xp + getAddXp(this.xps[gameVer], scoreDiff, diffSumXp, isGuarantee)); // XPの最低値は500(スプラ3の仕様)
     this.rds[gameVer] = toInRange(50, this.rd + diffSumRd, 350); // RDは50～350の範囲とする。明確な根拠は無いが、基本的にこの範囲を超えることはない。
-    this.vol[gameVer] += diffSumVol;
+    this.vols[gameVer] += diffSumVol;
     if (logHistory && this.id === targetPlayer.id) {
       const lastItem = this.history.last().last();
       lastItem.endXp = this.xps[gameVer];
@@ -111,4 +121,12 @@ function getAddXp(currentXp, scoreDiff, diffSum, isGuarantee) {
   return !isGuarantee ? diffSum : // 最低保障が無いなら単純に試合ごとの増減を加算する
     scoreDiff < 0 ? Math.min(diffSum, addXpByRate) : // 最低保証がある場合は、「最低保証or単純XP増減」のうち、より変化の大きい方を採用する
       Math.max(diffSum, addXpByRate);
+}
+
+function toInRange(min, v, max) {
+  return Math.max(Math.min(max, v), min);
+}
+
+function range(n) {
+  return Array.from(Array(n), (v, k) => k);
 }
