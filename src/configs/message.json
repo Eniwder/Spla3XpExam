@@ -16,7 +16,7 @@
       "matchAlgo": "マッチングアルゴリズム",
       "mathLimitRate": "マッチング時の最大レート幅",
       "limitRateMatch": "指定幅でランダムマッチ",
-      "sequenticalMatch": "XP順にマッチ",
+      "sequentialMatch": "XP順にマッチ",
       "matchNum": "マッチング回数"
     },
     "battleBalance": {

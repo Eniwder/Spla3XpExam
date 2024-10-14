@@ -119,11 +119,21 @@
                   <li>{{ t("playersStats.summary.max") }} : {{ playersStats.summary.max }}</li>
                   <li>{{ t("playersStats.summary.avg") }} : {{ playersStats.summary.avg }}</li>
                   <li>{{ t("playersStats.summary.min") }} : {{ playersStats.summary.min }}</li>
+                </ul>
+              </v-card-text>
+            </v-card>
+          </v-col>
+
+          <v-col cols="4" sm="4">
+            <v-card title="あなたの情報" v-show="playersStats.init">
+              <v-card-text>
+                <ul>
                   <li>{{ t("playersStats.summary.playerPower") }} : {{ playersStats.summary.playerPower }}</li>
                 </ul>
               </v-card-text>
             </v-card>
           </v-col>
+
         </v-row>
 
 
@@ -173,10 +183,11 @@ use([
 registerTransform(transform.histogram);
 provide(THEME_KEY, theme.global.current.value.dark ? 'dark' : 'light');
 import { Player } from './models/Player.js';
+import { Xmatch } from './models/Xmatch.js';
 
-const LimitRateMatch = "limitRateMatch";
-const SequenticalMatch = "sequenticalMatch";
-const MatchAlgos = [LimitRateMatch, SequenticalMatch].map(_ => ({ label: t('matchConfig.' + _), v: _ }));
+const LimitRateMatch = Xmatch.LimitRateMatch;
+const SequentialMath = Xmatch.SequentialMath;
+const MatchAlgos = [LimitRateMatch, SequentialMath].map(_ => ({ label: t('matchConfig.' + _), v: _ }));
 
 const Defaults = {
   powerAvg: 2000,
@@ -193,12 +204,12 @@ const Defaults = {
   countStop: 3000,
   positiveImpactFactor: 0.3,　// 平均より強いプレイヤーの影響度 TODO このへんは、スプラ2の方式でXP3100のプレイヤーがスプラ3の方式でXP5000になるよう調整する
   negativeImpactFactor: 0.2,　// 平均より弱いプレイヤーの影響度
-  connecttionErrorRate: 0.5,　// 回線落ちの確率。片方が確定で勝つ仕様とする
+  connectionErrorRate: 0.5,　// 回線落ちの確率。片方が確定で勝つ仕様とする
   performanceBias: 5,　// 最大±N%の「上振れと下振れ」のしやすさ能力を表す。0に近いほど常に安定感があるとする。
   matchAlgo: MatchAlgos[0],
   mathLimitRate: 500,
   targetPlayerRate: 2400,
-  matchNum: 3000,
+  matchNum: 10,
 };
 
 const chart = shallowRef(null);
@@ -302,6 +313,7 @@ function createPlayersWithChart() {
     playersStats.init = true;
     barOption.series[0].data = [];
     barOption.xAxis.data = [];
+    players.length = 0;
   }
 
   function updatePlayersSummary(playersData) {
@@ -372,130 +384,11 @@ function startBattleSimulate() {
   const { positiveImpactFactor, negativeImpactFactor } = battleBalance;
 
   for (let i = 0; i < matchNum; i++) {
-    let matchGroups = [];
-    if (splitRankN > 0 && (players.length > splitRankN)) { // マッチングをN位以内で区切る場合
-      players.sort((a, b) => b.xp - a.xp);
-      matchGroups.push(players.slice(0, 2000));
-      matchGroups.push(players.slice(2000));
-    } else {
-      matchGroups.push(players);
-    }
-    if (splitXpN > 0) { // マッチングを指定XPで区切る場合
-      matchGroups = matchGroups.flatMap(_ => _.reduce((acc, v) => {
-        acc[v.xp >= splitXpN ? 0 : 1].push(v);
-        return acc;
-      }, [[], []]));
-    }
-
-    const groups = matchGroups.flatMap(_ => getMatches(_));
-
-    groups.forEach(_ => {
-      const teams = [[], []];
-      if (fairSplitTeam) {
-        _.sort((a, b) => Math.min(a.xp) - Math.min(b.xp));
-      } else {
-        _.shuffle();
-      }
-      teams[0].push(_[0], _[3], _[4], _[7]);
-      teams[1].push(_[1], _[2], _[5], _[6]);
-      // glicko2は1vs1で対戦するレーティングシステムのため、各チームの平均ステータスを持つ仮想プレイヤーを作成して計算をする
-      const teamsWithStats = teams.map(team => ({
-        // 真の実力は±N%のブレが存在すると考えて計算する。ブレはプレイヤーによって異なる。
-        trueRating: average(team.map(_ => _.trueRating * (1 + _.performanceBias * 2 * Math.random() - _.performanceBias))),
-        xp: average(team.map(_ => _.xp)),
-        rd: average(team.map(_ => _.rd)),
-        vol: average(team.map(_ => _.vol)),
-      }));
-
-      // スプラ3のXPではなく内部レート(真の実力と仮定)を元に勝率を計算する
-      // 勝敗は部屋の平均パワーから離れているプレイヤーの影響を大きくする
-      // 例えば極端に弱いプレイヤーがいるチームは負けやすくなり、極端に強いプレイヤーがいるほうが勝ちやすくなる
-      const adjustImpact = ratingDifference => ratingDifference >= 0
-        ? positiveImpactFactor * ratingDifference : -negativeImpactFactor * ratingDifference;
-
-      teamsWithStats.forEach((team, idx) => {
-        team.actualPower = team.trueRating + sum(teams[idx].map(_ => adjustImpact(_.trueRating - team.trueRating)));
-        predictPool[idx].setRating(team.actualPower);
-        predictPool[idx].setRd(team.rd);
-        predictPool[idx].setVol(team.vol);
-      });
-
-      const expected = ranking4Tmp.predict(predictPool[0], predictPool[1]);
-      const judge = (expected > Math.random()) ? 1 : 0;
-
-      teamsWithStats[0].expected = expected;
-      teamsWithStats[1].expected = 1 - expected;
-      teamsWithStats[0].isWin = judge;
-      teamsWithStats[1].isWin = 1 - judge;
-
-      // 回線落ちが発生したら片方が勝ち、片方は何も起きなかった状態にする
-      if (connectionErrorRate > Math.random()) {
-        const winTeamIdx = Math.random() > 0.5 ? 0 : 1;
-        teams[winTeamIdx].expected = -1;
-        teams[winTeamIdx].isWin = 1;
-        teams[winTeamIdx].forEach(player => {
-          player.battle(teamsWithStats[winTeamIdx - 0], teamsWithStats[1 - winTeamIdx]);
-        });
-        return;
-      }
-
-      teams.forEach((team, idx) => {
-        team.forEach(player => {
-          player.battle(teamsWithStats[idx - 0], teamsWithStats[1 - idx]);
-        });
-      });
-
-    });
+    Xmatch.processSpla2Match(players);
+    // Xmatch.processSpla3Match(players);
+    // Xmatch.processCutomMatch(players, matchConfig, ratingParam);
   }
 
-  function getMatches(players) {
-    const groups = [];
-
-    return matchAlgo == LimitRateMatch ?
-      limitRateMatch(players, 500) : rankSuitMatch(players);
-
-    // 指定したレート範囲でランダムに選ばれたメンバーでマッチングをする
-    function limitRateMatch(players, limit) {
-      players.shuffle();
-      let currentGroup = [];
-      let groupedIdx = [];
-      let maxXp = 0, minXp = 0;
-      // 運が悪いと試合できない人が出てくるけど許容
-      for (let i = 0; i < players.length; i++) {
-        if (groupedIdx[i]) continue;
-        currentGroup = [];
-        currentGroup.push(players[i]);
-        maxXp = Math.min(countStop, players[i].xp);
-        minXp = Math.min(countStop, players[i].xp);
-        for (let j = i + 1; j < players.length; j++) {
-          if (groupedIdx[j]) continue;
-          const tmpXp = Math.min(countStop, players[j].xp);
-          const xpDiff = Math.max(Math.abs(maxXp - tmpXp), Math.abs(minXp - tmpXp));
-          if (xpDiff <= limit) {
-            currentGroup.push(players[j]);
-            groupedIdx[j] = true;
-            maxXp = Math.max(maxXp, tmpXp);
-            minXp = Math.min(minXp, tmpXp);
-          }
-          if (currentGroup.length == 8) {
-            groups.push(currentGroup);
-            break;
-          }
-        }
-      }
-      return groups;
-    }
-
-    // 上位から8人ずつマッチングしていく
-    function rankSuitMatch(players) {
-      players.sort((a, b) => b.xp - a.xp);
-      // 最下位付近は試合できない人が出てくるけど許容
-      for (let i = 0, max = parseInt(players.length / 8); i < max; i++) {
-        groups.push(players.slice(i * 8, (i + 1) * 8));
-      }
-      return groups;
-    }
-  }
 
 }
 
