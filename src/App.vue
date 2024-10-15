@@ -377,7 +377,7 @@ function createPlayers(playersStats, ratingParam) {
 
 
 function startBattleSimulate() {
-  Xmatch.init({ tau: ratingParam.tau, rating: playersStats.powerAvg, rd: ratingParam.rd, vol: ratingParam.vol });
+  Xmatch.init({ tau: ratingParam.tau, rating: playersStats.powerAvg, rd: ratingParam.rd, vol: ratingParam.vol }, players);
 
   for (let i = 0; i < matchConfig.matchNum; i++) {
     Xmatch.processSpla2Match(players);

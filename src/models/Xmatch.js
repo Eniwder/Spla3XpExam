@@ -23,7 +23,7 @@ export class Xmatch {
   }
 
   static bucketUpdate(gameVer, players) {
-    Xmatch.matchBucket[gameVer] = []; // TODO これをしなければ全員がマッチの機会を得られる？その場合は別途どっかで初期化が必要
+    Xmatch.matchBucket[gameVer] = []; // TODO これをしなければ全員がマッチの機会を得られる？その場合は別途どっかで初期化が必要、自分とマッチしない仕組みも必要
     players.forEach(player => {
       const bucket = player.xps[gameVer] - (player.xps[gameVer] % Xmatch.bucketSep);
       if (!Xmatch.matchBucket[gameVer][bucket]) Xmatch.matchBucket[gameVer][bucket] = [];
@@ -32,17 +32,14 @@ export class Xmatch {
   }
 
   static processSpla2Match(players) {
-    console.time('grping');
-    const groups = getMatches(Xmatch.Spla2, {
+    const matchGroupKeys = getMatchGroupKeys(players, Xmatch.Spla2, 0, 0, 0);
+    const groups = matchGroupKeys.flatMap(mgk => getMatches(mgk, Xmatch.Spla2, {
       matchAlgo: Xmatch.LimitRateMatch,
       limitRateDiff: 300,
-      countStop: 10000,
-      splitRankN: 0,
-      splitXpN: 0,
-    });
+    }));
     Xmatch.matchBucket[Xmatch.Spla2] = [];
-    // console.log(groups);
-    console.timeEnd('grping');
+    // console.time('grping');
+    // console.timeEnd('grping');
     groups.forEach(grp => {
       const teams = group2Team(grp, Xmatch.Spla2, Math.random() > 0.5);
       executeMatch(teams, {
@@ -64,13 +61,11 @@ export class Xmatch {
   }
 
   static processSpla3Match(players) {
-    const groups = getMatches(Xmatch.Spla3, {
+    const matchGroupKeys = getMatchGroupKeys(players, Xmatch.Spla3, 3000, 2000, 2000);
+    const groups = matchGroupKeys.flatMap(mgk => getMatches(mgk, Xmatch.Spla3, {
       matchAlgo: Xmatch.LimitRateMatch,
       limitRateDiff: 500,
-      countStop: 3000,
-      splitRankN: 2000,
-      splitXpN: 2000,
-    });
+    }));
     groups.forEach(grp => {
       const teams = group2Team(grp, Xmatch.Spla3, Math.random() > 0.5);
       executeMatch(teams, {
@@ -92,7 +87,8 @@ export class Xmatch {
   }
 
   static processCustomMatch(players, matchingConfig, ratingParam, battleBalance) {
-    const groups = getMatches(Xmatch.Spla3, matchingConfig);
+    const matchGroupKeys = getMatchGroupKeys(players, Xmatch.Custom, matchingConfig.countStop, matchingConfig.splitRankN, matchingConfig.splitXpN);
+    const groups = matchGroupKeys.flatMap(mgk => getMatches(mgk, Xmatch.Custom, matchingConfig));
     groups.forEach(grp => {
       const teams = group2Team(grp, Xmatch.Custom, fairSplitTeam);
       executeMatch(teams, { gameVer: Xmatch.Custom, matchingConfig, ratingParam, battleBalance });
@@ -169,40 +165,70 @@ function group2Team(grp, gameVer, fairSplitTeam) {
 }
 
 
-function getMatchGroups(players, gameVer, splitRankN, splitXpN) {
-  let matchGroups = [];
+function getMatchGroupKeys(players, gameVer, splitRankN, splitXpN, countStop) {
+  let matchGroupKeys = [];
+  // keys = [1025,1050,1075,1100,1150,...]
+  // Sep単位で、プレイヤーが存在するレート帯ごとに格納されている
+  const keys = Object.keys(Xmatch.matchBucket[gameVer]).map(Number);
+  keys.sort((a, b) => b - a);
+  // 1. 指定XP以上を同一XPとみなす
+  if (countStop > 0 && (countStop > keys[0])) {
+    for (let i = 0; i < keys.length; i++) {
+      if (keys[i] < countStop) {
+        // keys[i - 1]を基準にして、前のレート帯のプレイヤーをまとめる。keys[i]はすでに含まれているので(i-1)でよい
+        for (let j = 0; j < (i - 1); j++) {
+          Xmatch.matchBucket[gameVer][keys[i - 1]].push(...Xmatch.matchBucket[gameVer][keys[j]]);
+        }
+        break;
+      }
+    }
+  }
+
+  // 2. 指定順位で区切る
   if (splitRankN > 0 && (players.length > splitRankN)) { // マッチングをN位以内で区切る場合
-    players.sort((a, b) => b.xps[gameVer] - a.xps[gameVer]);
-    matchGroups.push(players.slice(0, 2000));
-    matchGroups.push(players.slice(2000));
+    let sum = 0;
+    for (let i = 0; i < keys.length; i++) {
+      sum += Xmatch.matchBucket[gameVer][keys[i]].length;
+      if (sum >= splitRankN) {
+        matchGroupKeys.push(keys.slice(0, i), keys.slice(i));
+        break;
+      }
+    }
   } else {
-    matchGroups.push(players);
+    matchGroupKeys.push(keys);
   }
-  if (splitXpN > 0) { // マッチングを指定XPで区切る場合
-    matchGroups = matchGroups.flatMap(_ => _.reduce((acc, v) => {
-      acc[v.xps[gameVer] >= splitXpN ? 0 : 1].push(v);
-      return acc;
-    }, [[], []]));
+
+  // 3. 指定XPで区切る(優先度は[順位区切り>XP区切り])
+  if (splitXpN > 0) {
+    const keys2 = matchGroupKeys[matchGroupKeys.length - 1];
+    for (let i = 0; i < keys2.length; i++) {
+      if (keys2[i] <= splitXpN) {
+        const tmpkeys = matchGroupKeys[matchGroupKeys.length - 1].pop();
+        matchGroupKeys.push(tmpkeys.slice(0, i), tmpkeys.slice(i));
+        break;
+      }
+    }
   }
-  return matchGroups;
+  return matchGroupKeys;
 }
 
-function getMatches(gameVer, matchingConfig) {
-  const groups = [];
-
-  return (matchingConfig.matchAlgo === Xmatch.LimitRateMatch) ? limitRateMatch(matchingConfig) :
-    (matchingConfig.matchAlgo === Xmatch.SequentialMatch) ? sequentialMatch(matchingConfig) : sequentialMatch(matchingConfig);
+function getMatches(matchGroupKeys, gameVer, matchingConfig) {
+  return (matchingConfig.matchAlgo === Xmatch.LimitRateMatch) ? limitRateMatch(matchGroupKeys, matchingConfig) :
+    (matchingConfig.matchAlgo === Xmatch.SequentialMatch) ? sequentialMatch(matchGroupKeys) : sequentialMatch(matchGroupKeys);
 
   // 指定したレート範囲でランダムに選ばれたメンバーでマッチングをする
-  function limitRateMatch(matchingConfig) {
+  function limitRateMatch(matchGroupKeys, matchingConfig) {
+    const groups = [];
+    // マッチング区切り処理を追加したい
+    const { limitRateDiff } = matchingConfig;
+    matchGroupKeys.sort((a, b) => b - a); // 不要かも　負荷次第で消す
 
-    const { limitRateDiff, countStop } = matchingConfig;
     let currentGroup = [];
     const idxStep = parseInt(limitRateDiff / Xmatch.bucketSep);
-    // 運が悪いと試合できない人が出てくるけど許容
-    const keys = Object.keys(Xmatch.matchBucket[gameVer]).map(Number);
-    for (let i = 0; i < keys.length; i++) {
-      const key = keys[i];
+    // TODO 運が悪いと試合できない人が出てくるけど許容?
+
+    for (let i = 0; i < matchGroupKeys.length; i++) {
+      const key = matchGroupKeys[i];
       if (!Xmatch.matchBucket[gameVer][key]) continue;
       currentGroup = [];
       currentGroup.push(Xmatch.matchBucket[gameVer][key].shift());
@@ -213,19 +239,18 @@ function getMatches(gameVer, matchingConfig) {
       for (let j = 0; j < 7; j++) {
         if (nextKeys.length == 0) break;
         const nextKey = Math.floor(nextKeys.length * Math.random());
-        // console.log(nextKeys, nextKey);
         currentGroup.push(Xmatch.matchBucket[gameVer][nextKeys[nextKey]].shift());
         if (Xmatch.matchBucket[gameVer][nextKeys[nextKey]]?.length == 0) {
           Xmatch.matchBucket[gameVer][nextKeys[nextKey]] = null;
           nextKeys = range(idxStep).map(_ => _ * Xmatch.bucketSep).filter(key => Xmatch.matchBucket[gameVer][key]);
         }
       }
-      // console.log(currentGroup);
       if (currentGroup.length === 8) {
         groups.push(currentGroup);
+      } else {
+        currentGroup = [];
       }
       if (Xmatch.matchBucket[gameVer][key]) i--;
-
     }
 
     return groups;
@@ -235,8 +260,9 @@ function getMatches(gameVer, matchingConfig) {
   // TODO 最下位付近は試合できない人が出てくるけど許容
   // 処理速度の理由からplayersのsortはしない。つまりbucket単位は同一レートとみなす
   // このマッチング方式ではsplitRankNとsplitRankXは動作しない。区切ったところで誤差が±7人で、十分に無視できる誤差だと思うから
-  function sequentialMatch(matchingConfig) {
-    const bukects = Object.keys(Xmatch.matchBucket[gameVer]).map(Number).sort((a, b) => b - a);
+  function sequentialMatch(matchGroupKeys) {
+    const groups = [];
+    const bukects = matchGroupKeys.sort((a, b) => b - a);
     let currentGroup = [];
     bukects.forEach(k => {
       for (let i = 0, len = Xmatch.matchBucket[gameVer][k].length; i < len; i++) {
