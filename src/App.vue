@@ -19,8 +19,8 @@
               variant="outlined" control-variant="stacked"></v-number-input>
           </v-col>
           <v-col cols="3" sm="3">
-            <v-number-input :label="$t('playersStats.targetPlayerRate')" :min="100" :max="10000" :step="50"
-              v-model="playersStats.targetPlayerRate" variant="outlined" control-variant="stacked"></v-number-input>
+            <v-number-input :label="$t('playersStats.playerPower')" :min="100" :max="10000" :step="50"
+              v-model="playersStats.playerPower" variant="outlined" control-variant="stacked"></v-number-input>
           </v-col>
           <!-- <v-col cols="4" sm="3">
             <v-number-input :label="$t('ratingParam.rd')" :min="50" :max="350" v-model="ratingParam.rd"
@@ -119,6 +119,7 @@
                   <li>{{ t("playersStats.summary.max") }} : {{ playersStats.summary.max }}</li>
                   <li>{{ t("playersStats.summary.avg") }} : {{ playersStats.summary.avg }}</li>
                   <li>{{ t("playersStats.summary.min") }} : {{ playersStats.summary.min }}</li>
+                  <li>{{ t("playersStats.summary.sd") }} : {{ playersStats.summary.sd }}</li>
                 </ul>
               </v-card-text>
             </v-card>
@@ -136,7 +137,6 @@
 
         </v-row>
 
-
       </v-container>
     </v-main>
     <!-- <AppFooter /> -->
@@ -147,9 +147,11 @@
 import { computed, nextTick, onMounted, reactive, ref, watch, provide, shallowRef } from 'vue';
 import { use, registerTransform } from 'echarts/core';
 import { CanvasRenderer } from 'echarts/renderers';
-import { BarChart, PieChart } from 'echarts/charts';
+import { BarChart, PieChart, LineChart } from 'echarts/charts';
 import { useTheme } from 'vuetify';
 import VChart, { THEME_KEY } from 'vue-echarts';
+import { UniversalTransition } from 'echarts/features';
+// import * as echarts from 'echarts'; // TODO
 
 import boxmuller from 'box-muller';
 import { Glicko2 } from 'glicko2';
@@ -162,7 +164,7 @@ import {
   GridComponent,
   DataZoomComponent,
   TransformComponent,
-  ToolboxComponent,
+  ToolboxComponent
 } from 'echarts/components';
 import { useI18n } from "vue-i18n";
 const { t, locale } = useI18n({ useScope: "global" });
@@ -170,6 +172,7 @@ use([
   CanvasRenderer,
   BarChart,
   PieChart,
+  LineChart,
   TitleComponent,
   TooltipComponent,
   LegendComponent,
@@ -177,11 +180,16 @@ use([
   DataZoomComponent,
   ToolboxComponent,
   TransformComponent,
+  UniversalTransition,
 ]);
 provide(THEME_KEY, theme.global.current.value.dark ? 'dark' : 'light');
-import { Player } from './models/Player.js';
+// import { Player } from './models/Player.js';
 import { Xmatch } from './models/Xmatch.js';
+const XmatchWorker = new Worker(new URL('./worker/XmatchWorker.js', import.meta.url), {
+  type: 'module',
+});
 
+const PlayerBarColor = '#a90000'; // TODO
 const LimitRateMatch = Xmatch.LimitRateMatch;
 const SequentialMatch = Xmatch.SequentialMatch;
 const MatchAlgos = [LimitRateMatch, SequentialMatch].map(_ => ({ label: t('matchConfig.' + _), v: _ }));
@@ -205,7 +213,7 @@ const Defaults = {
   performanceBias: 5,　// 最大±N%の「上振れと下振れ」のしやすさ能力を表す。0に近いほど常に安定感があるとする。
   matchAlgo: MatchAlgos[0],
   mathLimitRate: 500,
-  targetPlayerRate: 2400,
+  playerPower: 2400,
   matchNum: 10,
 };
 
@@ -216,11 +224,11 @@ const playersStats = reactive({
   playerNum: Defaults.playerNum,
   powerAvg: Defaults.powerAvg,
   sd: Defaults.sd,
-  targetPlayerRate: Defaults.targetPlayerRate,
+  playerPower: Defaults.playerPower,
   summary: {
     num: 0,
-    maxPower: 0,
-    minPower: 0,
+    powerMax: 0,
+    powerMin: 0,
     playerPower: 0
   }
 });
@@ -251,8 +259,10 @@ const battleBalance = reactive({
 });
 
 const logHistory = true;
-const players = [];
+let players = [];
+let sampleIds = [];
 const BinStep = 25;
+const SamplingStep = 500;
 
 const barOption = {
   title: {
@@ -265,13 +275,10 @@ const barOption = {
       type: 'shadow'
     },
     formatter: (v) => {
-      let dataStr = 'Amount: ';
-      if (typeof v[0].data === 'number') {
-        dataStr += v[0].data;
-      } else {
+      let dataStr = `Amount: ${v[0].data.value}`;
+      if (v[0].color === PlayerBarColor) {
         dataStr += v[0].data.value + '<br>' + 'Your Position!';
       }
-
       return `Range: ${v[0].axisValue}-${parseInt(v[0].axisValue) + BinStep}<br>${dataStr}`;
     }
   },
@@ -280,6 +287,7 @@ const barOption = {
     type: 'category',
     data: [],
     name: '内部レート',
+    // nameLocation: 'middle' // TODO
   },
   yAxis: {
     type: 'value',
@@ -290,9 +298,44 @@ const barOption = {
       name: 'histogram',
       type: 'bar',
       barWidth: '106%',
-      data: []
+      id: 1000,
+      universalTransition: {
+        enabled: true,
+        seriesKey: [],
+        delay: function (idx, count) {
+          return Math.random() * 400;
+        }
+      }
     },
   ],
+};
+
+const lineOption = {
+  title: {
+    text: 'AAAAAAAAAA'
+  },
+  tooltip: {
+    trigger: 'axis'
+  },
+  xAxis: {
+    name: 'Battles(N)',
+    type: 'category',
+  },
+  yAxis: {
+    name: 'XP',
+    type: 'value'
+  },
+  tooltip: {
+    trigger: 'axis',
+    axisPointer: {
+      type: 'shadow'
+    },
+    // formatter: (v) => {
+    //   console.log(v);
+    //   return v.map((_, idx) => `XP: ${toFixedNumber(_.data, 1)}` + (idx === (v.length - 1) ? '<- You!' : '')).join('<br>');
+    // }
+  },
+  series: []
 };
 
 onMounted(() => {
@@ -300,90 +343,144 @@ onMounted(() => {
 });
 
 function createPlayersWithChart() {
-  init();
-  const playersData = createPlayers(playersStats, ratingParam);
-  playersData.players.forEach(player => players.push(player));
-  updatePlayersSummary(playersData);
-  drawPlayersChars(barOption, chart.value, playersData);
-
-  function init() {
-    playersStats.init = true;
-    barOption.series[0].data = [];
-    barOption.xAxis.data = [];
-    players.length = 0;
-    Player.init({ tau: ratingParam.tau, rating: playersStats.powerAvg, rd: ratingParam.rd, vol: ratingParam.vol });
-  }
-
-  function updatePlayersSummary(playersData) {
-    playersStats.summary.num = playersData.playerNum.toLocaleString();;
-    playersStats.summary.max = toFixedNumber(playersData.maxPower);
-    playersStats.summary.avg = toFixedNumber(playersData.avgPower, 1);
-    playersStats.summary.min = toFixedNumber(playersData.minPower);
-    playersStats.summary.playerPower = playersData.playerPower;
-  }
-
-  function drawPlayersChars(opts, chart, playersData) {
-    opts.xAxis.data = playersData.category;
-    opts.series[0].data = playersData.powers;
-    chart.setOption(opts); // baroptisonをリアクティブにすると重すぎるので手動で更新
-  }
+  players = generatePlayers(playersStats);
+  const histData = createHistData(players, playersStats.playerPower, BinStep);
+  sampleIds = histData.sampleIds;
+  updatePlayersSummary(playersStats, players, histData);
+  drawPlayersChart(barOption, chart.value, histData);
 }
 
-function createPlayers(playersStats, ratingParam) {
-  const { playerNum, powerAvg, sd, targetPlayerRate } = playersStats;
-  const { rd, vol } = ratingParam;
-  let minPower = 10000000000, maxPower = 0, avgAcc = 0;
-  let id = 0;
+function generatePlayers(playersStats) {
+  const { playerNum, powerAvg, sd, playerPower } = playersStats;
   const players = [];
-
-  const _powers = [];
   for (let i = 0; i < playerNum - 1; i++) {
-    const truePower = Math.max(0, powerAvg * 2 + sd * boxmuller() - powerAvg);
-    addPlayer(truePower);
+    const powerTrue = Math.max(0, powerAvg * 2 + sd * boxmuller() - powerAvg);
+    players.push([i, powerTrue]);
   }
-  addPlayer(targetPlayerRate);
-  const powers = [];
-  const category = [];
-  const BinStep = 25;
-  for (let i = (minPower - (minPower % BinStep)), lim = (maxPower + BinStep); i < lim; i += BinStep) {
-    category.push(i);
-    let binSum = 0;
-    for (let j = i, lim2 = (i + BinStep); j < lim2; j++) {
-      binSum += (_powers[j] || 0);
-    }
-    if ((i <= targetPlayerRate) && (targetPlayerRate <= i)) {
-      binSum = {
-        value: binSum,
-        itemStyle: {
-          color: '#a90000' // TODO
-        }
-      };
-    }
-    powers.push(binSum);
-  }
-  return { players, playerNum, minPower, maxPower, avgPower: (avgAcc / playerNum), powers, playerPower: targetPlayerRate, category };
+  players.push([playerNum, playerPower]);
+  return players;
+}
 
-  function addPlayer(truePower) {
-    if (minPower > truePower) minPower = truePower;
-    if (maxPower < truePower) maxPower = truePower;
-    avgAcc += truePower;
-    const intTp = parseInt(truePower);
-    _powers[intTp] = _powers[intTp] ? (_powers[intTp] + 1) : 1;
-    players.push(new Player(id, truePower, powerAvg + (truePower - powerAvg) * 0.5, rd, vol, (Math.random() * battleBalance.performanceBias) / 100));
-    id++;
+function updatePlayersSummary(playersStats, players, histData) {
+  playersStats.init = true;
+  playersStats.summary.num = players.length.toLocaleString();;
+  playersStats.summary.max = toFixedNumber(histData.powerMax[1], 1);
+  playersStats.summary.avg = toFixedNumber(playersStats.powerAvg, 0);
+  playersStats.summary.sd = toFixedNumber(playersStats.sd, 0);
+  playersStats.summary.min = toFixedNumber(histData.powerMin[1], 1);
+  playersStats.summary.playerPower = playersStats.playerPower;
+}
+
+function getSeriesKey() {
+  return sampleIds.map((id, idx) => String(Number(barOption.series[0].data[0].groupId) + idx * SamplingStep));
+}
+
+function drawPlayersChart(barOption, chart, histData) {
+  barOption.xAxis.data = histData.bins;
+  barOption.series[0].data = histData.powersByBin;
+  barOption.series[0].universalTransition.seriesKey = getSeriesKey();
+  chart.setOption(barOption); // baroptisonをリアクティブにすると重すぎるので手動で更新
+}
+
+function createHistData(players, playerPower, binStep) {
+  const powersByBin = [];
+  const bins = [];
+  const sampleIds = [];
+
+  let powerMin = [-1, 10000000000], powerMax = [-1, 0];
+  const powers = [];
+  players.forEach(pl => { // pl[0]=id, pl[1]=power
+    if (powerMax[1] < pl[1]) { powerMax[0] = pl[0]; powerMax[1] = pl[1]; };
+    if (powerMin[1] > pl[1]) { powerMin[0] = pl[0]; powerMin[1] = pl[1]; };
+    const powerIdx = parseInt([pl[1]]);
+    if (!powers[powerIdx]) powers[powerIdx] = [pl[0], 0];
+    powers[powerIdx][1]++;
+  });
+
+  sampleIds.push(powerMin[0]);
+  for (let i = (powerMin[1] - (powerMin[1] % binStep)), lim = (powerMax[1] + binStep); i < lim; i += binStep) {
+    bins.push(i);
+    let binSum = 0, sampleId = -1;
+    for (let j = i, lim2 = (i + binStep); j < lim2; j++) {
+      if (powers[j]) {
+        sampleId = powers[j][0];
+        binSum += (powers[j][1] || 0);
+      }
+    }
+    const binData = {
+      value: binSum,
+      groupId: String(i - (i % SamplingStep))
+    };
+    if ((i <= playerPower) && (playerPower <= i)) {
+      binData.itemStyle = {
+        color: PlayerBarColor
+      };
+      binData.groupId = 'player';
+    }
+    powersByBin.push(binData);
+    if ((i % SamplingStep === 0) && sampleId >= 0) {
+      sampleIds.push(sampleId);
+    }
   }
+  sampleIds.push(powerMax[0]);
+
+  return { powerMin, powerMax, powersByBin, bins, sampleIds };
 }
 
 
 
 function startBattleSimulate() {
-  Xmatch.init({ tau: ratingParam.tau, rating: playersStats.powerAvg, rd: ratingParam.rd, vol: ratingParam.vol }, players);
+  console.log(lineOption);
+
+  const grpIds = getSeriesKey();
+
+  lineOption.series = sampleIds.map((id, idx) => {
+    return {
+      // groupId: grpId,
+      dataGroupId: grpIds[idx],
+      id: grpIds[idx],
+      universalTransition: {
+        enabled: true,
+        delay: function (idx, count) {
+          return Math.random() * 400;
+        }
+      },
+      type: 'line',
+      data: [players[id][1]]
+    };
+  });
+  lineOption.series.push({
+    groupId: 'player',
+    dataGroupId: 'player',
+    id: 'player',
+    universalTransition: {
+      enabled: true,
+      delay: function (idx, count) {
+        return Math.random() * 400;
+      }
+    },
+    type: 'line',
+    data: [players[players.length - 1][1]]
+  });
+
+  // setTimeout(() => chart.value.setOption(barOption, true), 2000);
+
+  chart.value.setOption(lineOption, true);
+  const XmatchWorker1 = new Worker(new URL('./worker/XmatchWorker.js', import.meta.url), { type: 'module' });
+  const XmatchWorker2 = new Worker(new URL('./worker/XmatchWorker.js', import.meta.url), { type: 'module' });
+  const XmatchWorker3 = new Worker(new URL('./worker/XmatchWorker.js', import.meta.url), { type: 'module' });
+  XmatchWorker1.postMessage({ command: 'init', data: players });
+  // Xmatch.init({ tau: ratingParam.tau, rating: playersStats.powerAvg, rd: ratingParam.rd, vol: ratingParam.vol }, players);
 
   for (let i = 0; i < matchConfig.matchNum; i++) {
-    Xmatch.processSpla2Match(players);
+    // Xmatch.processSpla2Match(players);
     // Xmatch.processSpla3Match(players);
     // Xmatch.processCutomMatch(players, matchConfig, ratingParam, battleBalance);
   }
+
+  XmatchWorker1.terminate();
+  XmatchWorker2.terminate();
+  XmatchWorker3.terminate();
 
 
 }
@@ -419,7 +516,7 @@ function average(array) {
 function toFixedNumber(v, decimals) {
   return v.toFixed(decimals);
 }
-</script>
+;</script>
 
 
 <style>
