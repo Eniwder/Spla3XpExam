@@ -28,11 +28,12 @@
       "powerAvg": "平均内部レート",
       "playerNum": "参加プレイヤーの人数",
       "sd": "SD",
-      "targetPlayerRate": "あなたの内部レート",
+      "playerPower": "あなたの内部レート",
       "summary": {
         "num": "人数",
         "min": "最小レート",
         "avg": "平均レート",
+        "sd": "分散",
         "max": "最大レート",
         "playerPower": "あなたのレート"
       }

@@ -1,6 +1,9 @@
 import { Player } from "./Player.js";
 import { Glicko2 } from 'glicko2';
 
+// players.push(new Player(id, powerTrue, powerAvg + (powerTrue - powerAvg) * 0.5, rd, vol, (Math.random() * battleBalance.performanceBias) / 100));
+// Player.init({ tau: ratingParam.tau, rating: playersStats.powerAvg, rd: ratingParam.rd, vol: ratingParam.vol });
+
 export class Xmatch {
 
   static LimitRateMatch = 'limitRateMatch';
@@ -13,17 +16,23 @@ export class Xmatch {
   static ranking4Tmp = null;
   static predictPool = null;
 
+  static players = [];
   static matchBucket = [[], [], []];
   static bucketSep = 25;
 
-  static init(glicko2Settings, players) {
-    Xmatch.ranking4Tmp = new Glicko2(glicko2Settings);
+  static init(ratingParam, players) {
+    console.log("heere");
+    Xmatch.ranking4Tmp = new Glicko2(ratingParam);
     Xmatch.predictPool = range(2).map(_ => Xmatch.ranking4Tmp.makePlayer());
-    [Xmatch.Spla2, Xmatch.Spla3, Xmatch.Custom].forEach(gameVer => Xmatch.bucketUpdate(gameVer, players));
+    // players.forEach(pl => {
+    //   Xmatch.players.push(new Player(pl[0], pl[1], powerAvg + (pl[1] - powerAvg) * 0.5, rd, vol, (Math.random() * battleBalance.performanceBias) / 100));
+    // });
+    // Player.init({ tau: ratingParam.tau, rating: playersStats.powerAvg, rd: ratingParam.rd, vol: ratingParam.vol });
+    // [Xmatch.Spla2, Xmatch.Spla3, Xmatch.Custom].forEach(gameVer => Xmatch.bucketUpdate(gameVer, players));
   }
 
   static bucketUpdate(gameVer, players) {
-    Xmatch.matchBucket[gameVer] = []; // TODO これをしなければ全員がマッチの機会を得られる？その場合は別途どっかで初期化が必要、自分とマッチしない仕組みも必要
+    Xmatch.matchBucket[gameVer] = [];
     players.forEach(player => {
       const bucket = player.xps[gameVer] - (player.xps[gameVer] % Xmatch.bucketSep);
       if (!Xmatch.matchBucket[gameVer][bucket]) Xmatch.matchBucket[gameVer][bucket] = [];
@@ -258,8 +267,6 @@ function getMatches(matchGroupKeys, gameVer, matchingConfig) {
 
   // 上位から8人ずつマッチングしていく
   // TODO 最下位付近は試合できない人が出てくるけど許容
-  // 処理速度の理由からplayersのsortはしない。つまりbucket単位は同一レートとみなす
-  // このマッチング方式ではsplitRankNとsplitRankXは動作しない。区切ったところで誤差が±7人で、十分に無視できる誤差だと思うから
   function sequentialMatch(matchGroupKeys) {
     const groups = [];
     const bukects = matchGroupKeys.sort((a, b) => b - a);
