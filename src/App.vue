@@ -112,7 +112,7 @@
 
         <v-row>
           <v-col cols="4" sm="4">
-            <v-card title="プレイヤー統計" v-show="playersStats.init">
+            <v-card title="Players Stats" v-show="playersStats.init">
               <v-card-text>
                 <ul>
                   <li>{{ t("playersStats.summary.num") }} : {{ playersStats.summary.num }}</li>
@@ -126,7 +126,7 @@
           </v-col>
 
           <v-col cols="4" sm="4">
-            <v-card title="あなたの情報" v-show="playersStats.init">
+            <v-card title="あなた" v-show="playersStats.init">
               <v-card-text>
                 <ul>
                   <li>{{ t("playersStats.summary.playerPower") }} : {{ playersStats.summary.playerPower }}</li>
@@ -154,8 +154,6 @@ import { UniversalTransition } from 'echarts/features';
 // import * as echarts from 'echarts'; // TODO
 
 import boxmuller from 'box-muller';
-import { Glicko2 } from 'glicko2';
-import crypto from "crypto";
 const theme = useTheme();
 import {
   TitleComponent,
@@ -261,6 +259,9 @@ const battleBalance = reactive({
 const logHistory = true;
 let players = [];
 let sampleIds = [];
+const splaPallet = {
+  spla1: {}, spla2: {}, spla3: {}
+};
 const BinStep = 25;
 const SamplingStep = 500;
 
@@ -276,7 +277,7 @@ const barOption = {
     },
     formatter: (v) => {
       let dataStr = `Amount: ${v[0].data.value}`;
-      if (v[0].color === PlayerBarColor) {
+      if (v[0].color === splaPallet.spla1.blue) {
         dataStr += v[0].data.value + '<br>' + 'Your Position!';
       }
       return `Range: ${v[0].axisValue}-${parseInt(v[0].axisValue) + BinStep}<br>${dataStr}`;
@@ -325,22 +326,50 @@ const lineOption = {
     name: 'XP',
     type: 'value'
   },
+  emphasis: {
+    focus: 'series'
+  },
+  // animationDuration: 10000,
   tooltip: {
     trigger: 'axis',
     axisPointer: {
       type: 'shadow'
     },
     // formatter: (v) => {
-    //   console.log(v);
-    //   return v.map((_, idx) => `XP: ${toFixedNumber(_.data, 1)}` + (idx === (v.length - 1) ? '<- You!' : '')).join('<br>');
+    // console.log(v);
+    // return v.sort((a, b) => b.data - a.data).map((_, idx) => `XP: ${toFixedNumber(_.data, 1)}` + (idx === (v.length - 1) ? '<- You!' : '')).join('<br>');
     // }
   },
   series: []
 };
 
 onMounted(() => {
+  initSplaPallet();
   createPlayersWithChart();
 });
+
+function initSplaPallet() {
+  const rootStyles = getComputedStyle(document.documentElement);
+  const spla1Orange = rootStyles.getPropertyValue('--spla1-theme-orange').trim();
+  const spla1Blue = rootStyles.getPropertyValue('--spla1-theme-blue').trim();
+  const spla2Pink = rootStyles.getPropertyValue('--spla2-theme-pink').trim();
+  const spla2Green = rootStyles.getPropertyValue('--spla2-theme-green').trim();
+  const spla3Yellow = rootStyles.getPropertyValue('--spla3-theme-yellow').trim();
+  const spla3Blue = rootStyles.getPropertyValue('--spla3-theme-blue').trim();
+  splaPallet.spla1 = {
+    orange: spla1Orange,
+    blue: spla1Blue
+  };
+  splaPallet.spla2 = {
+    pink: spla2Pink,
+    green: spla2Green
+  };
+  splaPallet.spla3 = {
+    yellow: spla3Yellow,
+    blue: spla3Blue
+  };
+}
+
 
 function createPlayersWithChart() {
   players = generatePlayers(playersStats);
@@ -372,7 +401,10 @@ function updatePlayersSummary(playersStats, players, histData) {
 }
 
 function getSeriesKey() {
-  return sampleIds.map((id, idx) => String(Number(barOption.series[0].data[0].groupId) + idx * SamplingStep));
+  return [...sampleIds.flatMap((id, idx) => {
+    const key = String(parseInt(barOption.series[0].data[0].groupId) + idx * SamplingStep);
+    return [key + '_2', key + '_3'];
+  }), 'player'];
 }
 
 function drawPlayersChart(barOption, chart, histData) {
@@ -409,13 +441,15 @@ function createHistData(players, playerPower, binStep) {
     }
     const binData = {
       value: binSum,
-      groupId: String(i - (i % SamplingStep))
+      groupId: String(i - (i % SamplingStep)) + ((i % SamplingStep) < (SamplingStep / 2) ? '_2' : '_3'),
+      itemStyle: {
+        color: splaPallet.spla1.orange
+      }
     };
     if ((i <= playerPower) && (playerPower <= i)) {
-      binData.itemStyle = {
-        color: PlayerBarColor
-      };
-      binData.groupId = 'player';
+      binData.itemStyle.color = splaPallet.spla1.blue;
+      // binData.groupId = 'player';
+      binData.id = 'player';
     }
     powersByBin.push(binData);
     if ((i % SamplingStep === 0) && sampleId >= 0) {
@@ -430,15 +464,15 @@ function createHistData(players, playerPower, binStep) {
 
 
 function startBattleSimulate() {
-  console.log(lineOption);
+  // console.log(lineOption);
 
-  const grpIds = getSeriesKey();
-
-  lineOption.series = sampleIds.map((id, idx) => {
-    return {
-      // groupId: grpId,
-      dataGroupId: grpIds[idx],
-      id: grpIds[idx],
+  const grpIds = getSeriesKey(); // これでチャート間のデータを紐づけする
+  lineOption.xAxis.data = range(matchConfig.matchNum);
+  // console.log(grpIds);
+  const lineData = (id, data, color) => (
+    {
+      dataGroupId: id,
+      id,
       universalTransition: {
         enabled: true,
         delay: function (idx, count) {
@@ -446,13 +480,19 @@ function startBattleSimulate() {
         }
       },
       type: 'line',
-      data: [players[id][1]]
-    };
+      data: data,
+      color
+    }
+  );
+
+  lineOption.series = sampleIds.flatMap((id, idx) => {
+    return [lineData(grpIds[idx * 2], [players[id][1]], splaPallet.spla3.yellow),
+    lineData(grpIds[(idx + 1) * 2 - 1], [players[id][1]], splaPallet.spla2.green)];
   });
+
   lineOption.series.push({
-    groupId: 'player',
     dataGroupId: 'player',
-    id: 'player',
+    // id: 'player',
     universalTransition: {
       enabled: true,
       delay: function (idx, count) {
@@ -460,10 +500,49 @@ function startBattleSimulate() {
       }
     },
     type: 'line',
-    data: [players[players.length - 1][1]]
+    data: [players[players.length - 1][1]],
+    color: splaPallet.spla3.blue,
+  });
+  lineOption.series.push({
+    dataGroupId: 'player',
+    // id: 'player',
+    universalTransition: {
+      enabled: true,
+      delay: function (idx, count) {
+        return Math.random() * 400;
+      }
+    },
+    type: 'line',
+    data: [players[players.length - 1][1]],
+    color: splaPallet.spla3.blue,
   });
 
-  // setTimeout(() => chart.value.setOption(barOption, true), 2000);
+  console.log(lineOption.series);
+
+  // setTimeout(() => {
+  //   lineOption.series.forEach(_ => {
+  //     _.showSymbol = false;
+  //   });
+  //   setInterval(() => {
+  //     lineOption.series.forEach(_ => {
+  //       _.data.push(_.data[_.data.length - 1] + Math.random() * 10 - 5);
+  //     });
+  //     chart.value.setOption(lineOption);
+  //   }, 300);
+  // }, 2000);
+  // showSymbol: false,
+
+  setTimeout(() => {
+    lineOption.series.forEach(_ => {
+      _.showSymbol = false;
+    });
+    lineOption.series.forEach(_ => {
+      _.data.push(_.data[_.data.length - 1] + Math.random() * 50 - 25);
+    });
+    chart.value.setOption(lineOption);
+  }, 1500);
+
+  setTimeout(() => chart.value.setOption(barOption, true), 5000);
 
   chart.value.setOption(lineOption, true);
   const XmatchWorker1 = new Worker(new URL('./worker/XmatchWorker.js', import.meta.url), { type: 'module' });
@@ -520,6 +599,25 @@ function toFixedNumber(v, decimals) {
 
 
 <style>
+:root {
+  --spla1-theme-orange: #de6624;
+  --spla1-theme-blue: #343bc4;
+  --spla2-theme-pink: #c12d74;
+  --spla2-theme-green: #2cb721;
+  --spla3-theme-yellow: #d0be08;
+  --spla3-theme-blue: #3a0ccd;
+  --spla3-theme-huuka: #3834b5;
+  --spla3-theme-utuho: #cfc235;
+  --spla3-theme-manta: #bd3e33;
+
+  --spla3-xmatch: #8ff1dc;
+}
+
+body {
+  font-family: "Spla" !important;
+
+}
+
 .echart-wrapper {
   width: 100vw;
   height: 50vh;

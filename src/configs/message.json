@@ -30,12 +30,12 @@
       "sd": "SD",
       "playerPower": "あなたの内部レート",
       "summary": {
-        "num": "人数",
-        "min": "最小レート",
-        "avg": "平均レート",
-        "sd": "分散",
-        "max": "最大レート",
-        "playerPower": "あなたのレート"
+        "num": "にんずう",
+        "min": "Min Power",
+        "avg": "Avg Power",
+        "sd": "SD",
+        "max": "Max Power",
+        "playerPower": "Power"
       }
     },
     "": ""
