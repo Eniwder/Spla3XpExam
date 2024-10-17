@@ -95,10 +95,10 @@
 
         <v-row>
           <v-col cols="4" sm="4">
-            <v-btn @click="createPlayersWithChart">Create Player</v-btn>
+            <v-btn @click="createPlayersWithChart" color="#1bbeab">Create Player</v-btn>
           </v-col>
           <v-col cols="4" sm="4">
-            <v-btn @click="startBattleSimulate">Season Start</v-btn>
+            <v-btn @click="startBattleSimulate" color="#1bbeab">Season Start</v-btn>
           </v-col>
         </v-row>
 
@@ -114,7 +114,7 @@
           <v-col cols="4" sm="4">
             <v-card title="Players Stats" v-show="playersStats.init">
               <v-card-text>
-                <ul>
+                <ul style="color:var(--spla3-xmatch)">
                   <li>{{ t("playersStats.summary.num") }} : {{ playersStats.summary.num }}</li>
                   <li>{{ t("playersStats.summary.max") }} : {{ playersStats.summary.max }}</li>
                   <li>{{ t("playersStats.summary.avg") }} : {{ playersStats.summary.avg }}</li>
@@ -126,7 +126,7 @@
           </v-col>
 
           <v-col cols="4" sm="4">
-            <v-card title="あなた" v-show="playersStats.init">
+            <v-card title="Your Profile" v-show="playersStats.init">
               <v-card-text>
                 <ul>
                   <li>{{ t("playersStats.summary.playerPower") }} : {{ playersStats.summary.playerPower }}</li>
@@ -136,7 +136,6 @@
           </v-col>
 
         </v-row>
-
       </v-container>
     </v-main>
     <!-- <AppFooter /> -->
@@ -191,6 +190,11 @@ const PlayerBarColor = '#a90000'; // TODO
 const LimitRateMatch = Xmatch.LimitRateMatch;
 const SequentialMatch = Xmatch.SequentialMatch;
 const MatchAlgos = [LimitRateMatch, SequentialMatch].map(_ => ({ label: t('matchConfig.' + _), v: _ }));
+const DefaultChartFont = {
+  fontFamily: ['Paintball', 'Meiryo',], // なぜか「M PLUS 2」を指定できないのでMeiryoで妥協
+  fontWeight: 900
+};
+const DefaultChartBack = '#212121';
 
 const Defaults = {
   powerAvg: 2000,
@@ -266,9 +270,13 @@ const BinStep = 25;
 const SamplingStep = 500;
 
 const barOption = {
+  textStyle: DefaultChartFont,
+  backgroundColor: DefaultChartBack,
   title: {
     text: 'プレイヤーの実力分布',
     left: 'center',
+    top: 10,
+    fontFamily: ['Paintball', 'Meiryo',], // なぜか「M PLUS 2」を指定できないのでMeiryoで妥協
   },
   tooltip: {
     trigger: 'axis',
@@ -287,12 +295,15 @@ const barOption = {
   xAxis: {
     type: 'category',
     data: [],
-    name: '内部レート',
-    // nameLocation: 'middle' // TODO
+    name: '内部パワー',
+    nameGap: 32,
+    nameLocation: 'center'
   },
   yAxis: {
     type: 'value',
-    name: '人数',
+    name: '人数         ',
+    nameLocation: 'end',
+    nameGap: 22,
   },
   series: [
     {
@@ -312,6 +323,8 @@ const barOption = {
 };
 
 const lineOption = {
+  textStyle: DefaultChartFont,
+  backgroundColor: DefaultChartBack,
   title: {
     text: 'AAAAAAAAAA'
   },
@@ -400,16 +413,18 @@ function updatePlayersSummary(playersStats, players, histData) {
   playersStats.summary.playerPower = playersStats.playerPower;
 }
 
+// これでチャート間のデータを紐づけする
 function getSeriesKey() {
   return [...sampleIds.flatMap((id, idx) => {
     const key = String(parseInt(barOption.series[0].data[0].groupId) + idx * SamplingStep);
-    return [key + '_2', key + '_3'];
+    return [key];
   }), 'player'];
 }
 
 function drawPlayersChart(barOption, chart, histData) {
   barOption.xAxis.data = histData.bins;
   barOption.series[0].data = histData.powersByBin;
+  barOption.series[0].id = 'player';//////////////////////////////////////////////////////////////////////
   barOption.series[0].universalTransition.seriesKey = getSeriesKey();
   chart.setOption(barOption); // baroptisonをリアクティブにすると重すぎるので手動で更新
 }
@@ -441,15 +456,14 @@ function createHistData(players, playerPower, binStep) {
     }
     const binData = {
       value: binSum,
-      groupId: String(i - (i % SamplingStep)) + ((i % SamplingStep) < (SamplingStep / 2) ? '_2' : '_3'),
+      groupId: String(i - (i % SamplingStep)),
       itemStyle: {
         color: splaPallet.spla1.orange
       }
     };
     if ((i <= playerPower) && (playerPower <= i)) {
       binData.itemStyle.color = splaPallet.spla1.blue;
-      // binData.groupId = 'player';
-      binData.id = 'player';
+      binData.groupId = 'player';
     }
     powersByBin.push(binData);
     if ((i % SamplingStep === 0) && sampleId >= 0) {
@@ -461,23 +475,19 @@ function createHistData(players, playerPower, binStep) {
   return { powerMin, powerMax, powersByBin, bins, sampleIds };
 }
 
-
-
 function startBattleSimulate() {
-  // console.log(lineOption);
-
-  const grpIds = getSeriesKey(); // これでチャート間のデータを紐づけする
+  const grpIds = getSeriesKey();
   lineOption.xAxis.data = range(matchConfig.matchNum);
-  // console.log(grpIds);
   const lineData = (id, data, color) => (
     {
       dataGroupId: id,
+      groupId: id.split('_')[0],
       id,
       universalTransition: {
         enabled: true,
         delay: function (idx, count) {
           return Math.random() * 400;
-        }
+        },
       },
       type: 'line',
       data: data,
@@ -486,51 +496,11 @@ function startBattleSimulate() {
   );
 
   lineOption.series = sampleIds.flatMap((id, idx) => {
-    return [lineData(grpIds[idx * 2], [players[id][1]], splaPallet.spla3.yellow),
-    lineData(grpIds[(idx + 1) * 2 - 1], [players[id][1]], splaPallet.spla2.green)];
+    return [lineData(grpIds[idx], [players[id][1]], splaPallet.spla2.pink),
+    lineData(grpIds[idx] + '_2', [players[id][1]], splaPallet.spla3.yellow)];
   });
-
-  lineOption.series.push({
-    dataGroupId: 'player',
-    // id: 'player',
-    universalTransition: {
-      enabled: true,
-      delay: function (idx, count) {
-        return Math.random() * 400;
-      }
-    },
-    type: 'line',
-    data: [players[players.length - 1][1]],
-    color: splaPallet.spla3.blue,
-  });
-  lineOption.series.push({
-    dataGroupId: 'player',
-    // id: 'player',
-    universalTransition: {
-      enabled: true,
-      delay: function (idx, count) {
-        return Math.random() * 400;
-      }
-    },
-    type: 'line',
-    data: [players[players.length - 1][1]],
-    color: splaPallet.spla3.blue,
-  });
-
-  console.log(lineOption.series);
-
-  // setTimeout(() => {
-  //   lineOption.series.forEach(_ => {
-  //     _.showSymbol = false;
-  //   });
-  //   setInterval(() => {
-  //     lineOption.series.forEach(_ => {
-  //       _.data.push(_.data[_.data.length - 1] + Math.random() * 10 - 5);
-  //     });
-  //     chart.value.setOption(lineOption);
-  //   }, 300);
-  // }, 2000);
-  // showSymbol: false,
+  lineOption.series.push(lineData('player', [players[players.length - 1][1]], splaPallet.spla2.green));
+  lineOption.series.push(lineData('player_2', [players[players.length - 1][1]], splaPallet.spla3.blue));
 
   setTimeout(() => {
     lineOption.series.forEach(_ => {
@@ -538,11 +508,19 @@ function startBattleSimulate() {
     });
     lineOption.series.forEach(_ => {
       _.data.push(_.data[_.data.length - 1] + Math.random() * 50 - 25);
+      _.data.push(_.data[_.data.length - 1] + Math.random() * 100 - 50);
+      _.data.push(_.data[_.data.length - 1] + Math.random() * 150 - 75);
+      _.data.push(_.data[_.data.length - 1] + Math.random() * 150 - 75);
+      _.data.push(_.data[_.data.length - 1] + Math.random() * 150 - 75);
+      _.data.push(_.data[_.data.length - 1] + Math.random() * 150 - 75);
+      _.data.push(_.data[_.data.length - 1] + Math.random() * 150 - 75);
+      _.data.push(_.data[_.data.length - 1] + Math.random() * 150 - 75);
+      _.data.push(_.data[_.data.length - 1] + Math.random() * 150 - 75);
     });
     chart.value.setOption(lineOption);
-  }, 1500);
+  }, 1000);
 
-  setTimeout(() => chart.value.setOption(barOption, true), 5000);
+  setTimeout(() => Line2Hist(), 1500);
 
   chart.value.setOption(lineOption, true);
   const XmatchWorker1 = new Worker(new URL('./worker/XmatchWorker.js', import.meta.url), { type: 'module' });
@@ -560,8 +538,37 @@ function startBattleSimulate() {
   XmatchWorker1.terminate();
   XmatchWorker2.terminate();
   XmatchWorker3.terminate();
+}
 
+// TODO 逆変換も作る。　相互変換のためにデータを上書きしないようにする。
+function Line2Hist() {
+  // 1. ラインにドット(symbol)をつける。つけないとアニメーションが動かないっぽい
+  lineOption.series.forEach(_ => {
+    _.showSymbol = true;
+  });
+  lineOption.animationDuration = 100;
+  chart.value.setOption(lineOption);
 
+  // 2. 各データを平均にまとめる。アニメーションの都合上、多対多の実装方法が分からなかったので1対多に置き換える
+  setTimeout(() => {
+    lineOption.xAxis.data = [0];
+    const grpVals = lineOption.series.reduce((acc, v) => {
+      if (!acc[v.groupId]) acc[v.groupId] = [];
+      acc[v.groupId].push(average(v.data));
+      return acc;
+    }, {});
+
+    lineOption.series = lineOption.series.filter(_ => !_.id.includes('_2')).map(_ => {
+      _.showSymbol = true;
+      _.data = [average(grpVals[_.groupId])];
+      _.groupId === 'player' ? _.color = splaPallet.spla1.blue : _.color = splaPallet.spla1.orange;
+      return _;
+    });
+    chart.value.setOption(lineOption, true);
+  }, 400);
+
+  // 3. 2のアニメーションが終了したタイミングでヒストグラムに戻す
+  setTimeout(() => chart.value.setOption(barOption, true), 1500);
 }
 
 
@@ -610,13 +617,14 @@ function toFixedNumber(v, decimals) {
   --spla3-theme-utuho: #cfc235;
   --spla3-theme-manta: #bd3e33;
 
-  --spla3-xmatch: #8ff1dc;
+  --spla3-xmatch: #0fdd9e;
 }
 
 body {
-  font-family: "Spla" !important;
-
+  font-family: "Paintball", "FOT-Rowdy EB", "FOT-Rowdy Std EB",
+    "FOT-Rowdy CID EB", "Rowdy EB", "Rowdy Std EB", "Rowdy CID EB", "M PLUS 2" !important;
 }
+
 
 .echart-wrapper {
   width: 100vw;
