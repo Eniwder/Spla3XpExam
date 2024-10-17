@@ -55,7 +55,8 @@
           </v-col>
 
           <v-col cols="4" sm="4">
-            <v-switch :label="$t('matchConfig.fairSplitTeam')" v-model="matchConfig.fairSplitTeam" inset></v-switch>
+            <v-number-input :label="$t('matchConfig.fairSplitTeam')" :min="0" :max="1" :step="0.1"
+              v-model="matchConfig.fairSplitTeam" variant="outlined" control-variant="stacked"></v-number-input>
           </v-col>
           <v-col cols="4" sm="3">
             <v-number-input :label="$t('matchConfig.countStop')" :min="0" v-model="matchConfig.countStop" :step="100"
@@ -182,9 +183,9 @@ use([
 provide(THEME_KEY, theme.global.current.value.dark ? 'dark' : 'light');
 // import { Player } from './models/Player.js';
 import { Xmatch } from './models/Xmatch.js';
-const XmatchWorker = new Worker(new URL('./worker/XmatchWorker.js', import.meta.url), {
-  type: 'module',
-});
+// const XmatchWorker = new Worker(new URL('./worker/XmatchWorker.js', import.meta.url), {
+//   type: 'module',
+// });
 
 const PlayerBarColor = '#a90000'; // TODO
 const LimitRateMatch = Xmatch.LimitRateMatch;
@@ -207,7 +208,7 @@ const Defaults = {
   splitXpN: 2000,
   isGuarantee: true,　// 最低保証の有無
   isFT3: true,
-  fairSplitTeam: false,
+  fairSplitTeam: 0.5,
   countStop: 3000,
   positiveImpactFactor: 0.3,　// 平均より強いプレイヤーの影響度 TODO このへんは、スプラ2の方式でXP3100のプレイヤーがスプラ3の方式でXP5000になるよう調整する
   negativeImpactFactor: 0.2,　// 平均より弱いプレイヤーの影響度
@@ -260,14 +261,82 @@ const battleBalance = reactive({
   performanceBias: Defaults.performanceBias,
 });
 
-const logHistory = true;
-let players = [];
-let sampleIds = [];
+const Spla2Conf = {
+  ratingParam: {
+    rd: Defaults.rd,
+    vol: Defaults.vol,
+    tau: Defaults.tau,
+    isFT3: false,
+    isGuarantee: false,
+    powerAvg: playersStats.powerAvg,
+  },
+  matchingConfig: {
+    connectionErrorRate: 0.5,
+    splitRankN: 0,
+    splitXpN: 0,
+    countStop: 0,
+    matchAlgo: Xmatch.LimitRateMatch,
+    mathLimitRate: 500,
+    fairSplitTeam: Defaults.fairSplitTeam,
+  },
+  battleBalance: {
+    positiveImpactFactor: Defaults.positiveImpactFactor,
+    negativeImpactFactor: Defaults.negativeImpactFactor,
+    performanceBias: Defaults.performanceBias,
+  },
+  gameVer: Xmatch.Spla2,
+};
+
+const Spla3Conf = {
+  ratingParam: {
+    rd: Defaults.rd,
+    vol: Defaults.vol,
+    tau: Defaults.tau,
+    isFT3: true,
+    isGuarantee: true,
+    powerAvg: playersStats.powerAvg,
+  },
+  matchingConfig: {
+    connectionErrorRate: 0.5,
+    splitRankN: 2000,
+    splitXpN: 2000,
+    countStop: 3000,
+    matchAlgo: Xmatch.LimitRateMatch,
+    mathLimitRate: 300,
+    fairSplitTeam: Defaults.fairSplitTeam,
+  },
+  battleBalance: {
+    positiveImpactFactor: Defaults.positiveImpactFactor,
+    negativeImpactFactor: Defaults.negativeImpactFactor,
+    performanceBias: Defaults.performanceBias,
+  },
+  gameVer: Xmatch.Spla3,
+};
+
+// 定数
+const BinStep = 25;
+const SamplingStep = 500;
+const PlayerDefault = {
+  id: -1,
+  powerTrue: -1,
+  bias: -1,
+  currentXps: [0, 0, 0],
+  minXps: [0, 0, 0],
+  maxXps: [0, 0, 0],
+};
+
+// 準定数
 const splaPallet = {
   spla1: {}, spla2: {}, spla3: {}
 };
-const BinStep = 25;
-const SamplingStep = 500;
+const player = reactive({ ...PlayerDefault });
+
+// mutable
+// const logHistory = true;
+let players = [];
+let sampleIds = [];
+let battleCount = 0;
+
 
 const barOption = {
   textStyle: DefaultChartFont,
@@ -363,43 +432,45 @@ onMounted(() => {
 
 function initSplaPallet() {
   const rootStyles = getComputedStyle(document.documentElement);
-  const spla1Orange = rootStyles.getPropertyValue('--spla1-theme-orange').trim();
-  const spla1Blue = rootStyles.getPropertyValue('--spla1-theme-blue').trim();
-  const spla2Pink = rootStyles.getPropertyValue('--spla2-theme-pink').trim();
-  const spla2Green = rootStyles.getPropertyValue('--spla2-theme-green').trim();
-  const spla3Yellow = rootStyles.getPropertyValue('--spla3-theme-yellow').trim();
-  const spla3Blue = rootStyles.getPropertyValue('--spla3-theme-blue').trim();
   splaPallet.spla1 = {
-    orange: spla1Orange,
-    blue: spla1Blue
+    orange: rootStyles.getPropertyValue('--spla1-theme-orange').trim(),
+    blue: rootStyles.getPropertyValue('--spla1-theme-blue').trim()
   };
   splaPallet.spla2 = {
-    pink: spla2Pink,
-    green: spla2Green
+    pink: rootStyles.getPropertyValue('--spla2-theme-pink').trim(),
+    green: rootStyles.getPropertyValue('--spla2-theme-green').trim()
   };
   splaPallet.spla3 = {
-    yellow: spla3Yellow,
-    blue: spla3Blue
+    yellow: rootStyles.getPropertyValue('--spla3-theme-yellow').trim(),
+    blue: rootStyles.getPropertyValue('--spla3-theme-blue').trim()
   };
 }
 
-
 function createPlayersWithChart() {
-  players = generatePlayers(playersStats);
+  Object.assign(player, { ...PlayerDefault });
+  players = generatePlayers(playersStats, battleBalance);
   const histData = createHistData(players, playersStats.playerPower, BinStep);
   sampleIds = histData.sampleIds;
   updatePlayersSummary(playersStats, players, histData);
   drawPlayersChart(barOption, chart.value, histData);
 }
 
-function generatePlayers(playersStats) {
+function generatePlayers(playersStats, battleBalance) {
   const { playerNum, powerAvg, sd, playerPower } = playersStats;
+  Spla2Conf.ratingParam.powerAvg = powerAvg;
+  Spla3Conf.ratingParam.powerAvg = powerAvg;
+
   const players = [];
   for (let i = 0; i < playerNum - 1; i++) {
     const powerTrue = Math.max(0, powerAvg * 2 + sd * boxmuller() - powerAvg);
-    players.push([i, powerTrue]);
+    const bias = (Math.random() * battleBalance.performanceBias) / 100;
+    players.push([i, powerTrue, bias]);
   }
-  players.push([playerNum, playerPower]);
+  player.id = playerNum - 1;
+  player.powerTrue = playerPower;
+  const bias = (Math.random() * battleBalance.performanceBias) / 100;
+
+  players.push([player.id, player.powerTrue, bias]);
   return players;
 }
 
@@ -413,7 +484,6 @@ function updatePlayersSummary(playersStats, players, histData) {
   playersStats.summary.playerPower = playersStats.playerPower;
 }
 
-// これでチャート間のデータを紐づけする
 function getSeriesKey() {
   return [...sampleIds.flatMap((id, idx) => {
     const key = String(parseInt(barOption.series[0].data[0].groupId) + idx * SamplingStep);
@@ -429,6 +499,8 @@ function drawPlayersChart(barOption, chart, histData) {
   chart.setOption(barOption); // baroptisonをリアクティブにすると重すぎるので手動で更新
 }
 
+
+// sampleIdsの処理を見直す、seriesKeyも見直す
 function createHistData(players, playerPower, binStep) {
   const powersByBin = [];
   const bins = [];
@@ -471,13 +543,15 @@ function createHistData(players, playerPower, binStep) {
     }
   }
   sampleIds.push(powerMax[0]);
+  if (!sampleIds.includes(player.id)) sampleIds.push(player.id);
 
   return { powerMin, powerMax, powersByBin, bins, sampleIds };
 }
 
-function startBattleSimulate() {
-  const grpIds = getSeriesKey();
+async function startBattleSimulate() {
+  battleCount = 0;
   lineOption.xAxis.data = range(matchConfig.matchNum);
+  lineOption.series = [];
   const lineData = (id, data, color) => (
     {
       dataGroupId: id,
@@ -490,54 +564,113 @@ function startBattleSimulate() {
         },
       },
       type: 'line',
-      data: data,
+      data: [data],
       color
     }
   );
 
-  lineOption.series = sampleIds.flatMap((id, idx) => {
-    return [lineData(grpIds[idx], [players[id][1]], splaPallet.spla2.pink),
-    lineData(grpIds[idx] + '_2', [players[id][1]], splaPallet.spla3.yellow)];
+  // setTimeout(() => Line2Hist(), 1500);
+
+  const XmatchWorker1 = createWorker(new Worker(new URL('./worker/XmatchWorker.js', import.meta.url), { type: 'module' }));
+  const XmatchWorker2 = createWorker(new Worker(new URL('./worker/XmatchWorker.js', import.meta.url), { type: 'module' }));
+  // const XmatchWorker3 = createWorker(new Worker(new URL('./worker/XmatchWorker.js', import.meta.url), { type: 'module' }));
+  const workers = [];
+  const opts = {
+    [Xmatch.Spla2]: Spla2Conf,
+    [Xmatch.Spla3]: Spla3Conf,
+    [Xmatch.Custom]: {
+      matchConfig,
+      ratingParam: Object.assign({ powerAvg: playersStats.powerAvg }, ratingParam),
+      battleBalance,
+      gameVer: Xmatch.Custom
+    }
+  };
+  const LineColors = [
+    {
+      [Xmatch.Spla2]: splaPallet.spla2.green,
+      [Xmatch.Spla3]: splaPallet.spla3.blue
+    },
+    {
+      [Xmatch.Spla2]: splaPallet.spla2.pink,
+      [Xmatch.Spla3]: splaPallet.spla3.yellow
+    },
+  ];
+
+  workers.push([XmatchWorker1, Xmatch.Spla2]);
+  workers.push([XmatchWorker2, Xmatch.Spla3]);
+  // workers.push([XmatchWorker3, Xmatch.Custom]);  // TODO
+
+
+  const grpIds = getSeriesKey();
+  const getChartId = (id, idx, initData) => ((id === player.id) ? 'player' : grpIds[idx]) + ((initData.gameVer === Xmatch.Spla3) ? '' : `_${initData.gameVer}`);
+  // workerInit = [{ xps, gameVer }, ...]
+  const workerInit = await Promise.all(workers.map(_ => _[0]({ command: 'init', players, sampleIds, opts: opts[_[1]] })));
+  console.log(grpIds);
+  lineOption.series = toSeriesOrder(workerInit).map(initData => {
+    if (initData.id === player.id) {
+      updatePlayerXp(initData.gameVer, toFixedNumber(initData.xp, 1), true);
+      return lineData(getChartId(initData), player.currentXps[initData.gameVer], LineColors[0][initData.gameVer]);
+    } else {
+      return lineData(getChartId(initData), toFixedNumber(initData.xps[id], 1), LineColors[1][initData.gameVer]);
+    }
   });
-  lineOption.series.push(lineData('player', [players[players.length - 1][1]], splaPallet.spla2.green));
-  lineOption.series.push(lineData('player_2', [players[players.length - 1][1]], splaPallet.spla3.blue));
-
-  setTimeout(() => {
-    lineOption.series.forEach(_ => {
-      _.showSymbol = false;
-    });
-    lineOption.series.forEach(_ => {
-      _.data.push(_.data[_.data.length - 1] + Math.random() * 50 - 25);
-      _.data.push(_.data[_.data.length - 1] + Math.random() * 100 - 50);
-      _.data.push(_.data[_.data.length - 1] + Math.random() * 150 - 75);
-      _.data.push(_.data[_.data.length - 1] + Math.random() * 150 - 75);
-      _.data.push(_.data[_.data.length - 1] + Math.random() * 150 - 75);
-      _.data.push(_.data[_.data.length - 1] + Math.random() * 150 - 75);
-      _.data.push(_.data[_.data.length - 1] + Math.random() * 150 - 75);
-      _.data.push(_.data[_.data.length - 1] + Math.random() * 150 - 75);
-      _.data.push(_.data[_.data.length - 1] + Math.random() * 150 - 75);
-    });
-    chart.value.setOption(lineOption);
-  }, 1000);
-
-  setTimeout(() => Line2Hist(), 1500);
 
   chart.value.setOption(lineOption, true);
-  const XmatchWorker1 = new Worker(new URL('./worker/XmatchWorker.js', import.meta.url), { type: 'module' });
-  const XmatchWorker2 = new Worker(new URL('./worker/XmatchWorker.js', import.meta.url), { type: 'module' });
-  const XmatchWorker3 = new Worker(new URL('./worker/XmatchWorker.js', import.meta.url), { type: 'module' });
-  XmatchWorker1.postMessage({ command: 'init', data: players });
-  // Xmatch.init({ tau: ratingParam.tau, rating: playersStats.powerAvg, rd: ratingParam.rd, vol: ratingParam.vol }, players);
 
+  // Xmatch.init({ tau: ratingParam.tau, rating: playersStats.powerAvg, rd: ratingParam.rd, vol: ratingParam.vol }, players);
   for (let i = 0; i < matchConfig.matchNum; i++) {
-    // Xmatch.processSpla2Match(players);
-    // Xmatch.processSpla3Match(players);
-    // Xmatch.processCutomMatch(players, matchConfig, ratingParam, battleBalance);
+    // awaitだと各verのデータをバトル毎に待つのが効率悪いのでthen
+    Promise.all(workers.map(_ => _[0]({ command: 'battle' }))).then(xpsByVer => {
+      xpsByVer.forEach((data, idx) => {
+        sampleIds.forEach(id => {
+          if (id === player.id) {
+            updatePlayerXp(data.gameVer, toFixedNumber(data.xps[id], 1), true);
+            lineOption.series[idx].data.push(player.currentXps[data.gameVer]);
+          } else {
+            lineOption.series[idx].data.push(toFixedNumber(data.xps[id], 1));
+          }
+        });
+      });
+      updateBattleStep(i);
+      chart.value.setOption(lineOption);
+    }).catch(err => {
+      console.error(err);
+      workers.forEach(_ => _.terminate());
+      alert('something to wrong'); // TODO
+    });
   }
 
-  XmatchWorker1.terminate();
-  XmatchWorker2.terminate();
-  XmatchWorker3.terminate();
+  // XmatchWorker1.terminate();
+  // XmatchWorker2.terminate();
+  // XmatchWorker3.terminate();
+
+  function toSeriesOrder(xpsByVer) {
+    const flatData = xpsByVer.flatMap(gameVer => Object.entries(ver.xps).map((id, xp) => ({ gameVer, id, xp })));
+    return flatData.sort(seriesOrderSort);
+    // Spla3のデータが最後尾になるように並び替える
+    function seriesOrderSort(a, b) {
+      if (a.gameVer === Xmatch.Spla3 && b.gameVer === Xmatch.Spla3) return a.id - b.id;
+      if (a.gameVer === Xmatch.Spla3) return 1;
+      if (b.gameVer === Xmatch.Spla3) return -1;
+      const gameVerDiff = a.gameVer - b.gameVer;
+      return (gameVerDiff !== 0) ? gameVerDiff : a.id - b.id;
+    }
+  }
+}
+
+function updateBattleStep(step) {
+  console.log(`done: ${step}`);
+  battleCount = step;
+  if (battleCount >= matchConfig.matchNum) {
+    workers.forEach(_ => _.terminate());
+  }
+  // 時間計測とか
+}
+
+function updatePlayerXp(gameVer, newXp, init) {
+  player.currentXps[gameVer] = newXp;
+  if (init || (newXp > player.maxXps[gameVer])) player.maxXps[gameVer] = newXp;
+  if (init || (newXp < player.minXps[gameVer])) player.minXps[gameVer] = newXp;
 }
 
 // TODO 逆変換も作る。　相互変換のためにデータを上書きしないようにする。
@@ -573,7 +706,22 @@ function Line2Hist() {
 
 
 
+function createWorker(worker) {
+  const map = new Map();
+  let id = 0;
 
+  worker.onmessage = event => {
+    const [id, result] = event.data;
+    const resolve = map.get(id);
+    map.delete(id);
+    resolve(result);
+  };
+
+  return data => new Promise(resolve => {
+    map.set(id, resolve);
+    worker.postMessage([id++, data]);
+  });
+}
 function sum(array) {
   return array.reduce((accumulator, currentValue) => accumulator + currentValue, 0);
 };
@@ -587,13 +735,7 @@ Array.prototype.last = function () {
   if (this.length < 1) return undefined;
   return this[this.length - 1];
 };
-Array.prototype.shuffle = function () {
-  for (let i = this.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [this[i], this[j]] = [this[j], this[i]];
-  }
-  return this; // 元の配列を返す
-};
+
 function average(array) {
   if (array.length === 0) return NaN;
   const sum = array.reduce((accumulator, currentValue) => accumulator + currentValue, 0);

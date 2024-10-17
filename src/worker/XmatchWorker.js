@@ -3,11 +3,14 @@ import { Xmatch } from '../models/Xmatch';
 
 
 addEventListener("message", ev => {
-  const data = ev.data;
+  const [id, data] = ev.data;
   if (data.command === 'init') {
-    // Xmatch.init(ev.data);
-    console.log(ev.data);
-    console.log(Xmatch.ranking4Tmp);
-    postMessage('done init');
+    Xmatch.init(data.players, data.sampleIds, data.opts);
+    postMessage([id, { gameVer: Xmatch.gameVer, xps: Xmatch.getSamplesXp() }]);
+  } else if (data.command === 'battle') {
+    Xmatch.processMatch();
+    postMessage([id, { gameVer: Xmatch.gameVer, xps: Xmatch.getSamplesXp() }]);
   }
 }, false);
+
+

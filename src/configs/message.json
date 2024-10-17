@@ -10,7 +10,7 @@
     "matchConfig": {
       "splitRankN": "指定順位でマッチを分離",
       "splitXpN": "指定XPでマッチを分離",
-      "fairSplitTeam": "フェアなチーム分け",
+      "fairSplitTeam": "フェアなチーム分けの確率",
       "countStop": "最大みなしXP",
       "connectionErrorRate": "回線落ちの確率",
       "matchAlgo": "マッチングアルゴリズム",

@@ -12,103 +12,67 @@ export class Xmatch {
   static Spla2 = 0;
   static Spla3 = 1;
   static Custom = 2;
+  static gameVer = -1;
 
   static ranking4Tmp = null;
   static predictPool = null;
 
   static players = [];
-  static matchBucket = [[], [], []];
+  static matchBucket = [];
   static bucketSep = 25;
 
-  static init(ratingParam, players) {
-    console.log("heere");
-    Xmatch.ranking4Tmp = new Glicko2(ratingParam);
+  static matchingConfig = {};
+  static ratingParam = {};
+  static battleBalance = {};
+  static sampleIds = [];
+
+  static init(players, sampleIds, opts) {
+    Xmatch.matchingConfig = opts.matchingConfig;
+    Xmatch.ratingParam = opts.ratingParam;
+    Xmatch.battleBalance = opts.battleBalance;
+    Xmatch.sampleIds = sampleIds;
+    Xmatch.gameVer = opts.gameVer;
+
+    Xmatch.ranking4Tmp = new Glicko2(Xmatch.ratingParam);
     Xmatch.predictPool = range(2).map(_ => Xmatch.ranking4Tmp.makePlayer());
-    // players.forEach(pl => {
-    //   Xmatch.players.push(new Player(pl[0], pl[1], powerAvg + (pl[1] - powerAvg) * 0.5, rd, vol, (Math.random() * battleBalance.performanceBias) / 100));
-    // });
-    // Player.init({ tau: ratingParam.tau, rating: playersStats.powerAvg, rd: ratingParam.rd, vol: ratingParam.vol });
-    // [Xmatch.Spla2, Xmatch.Spla3, Xmatch.Custom].forEach(gameVer => Xmatch.bucketUpdate(gameVer, players));
-  }
-
-  static bucketUpdate(gameVer, players) {
-    Xmatch.matchBucket[gameVer] = [];
-    players.forEach(player => {
-      const bucket = player.xps[gameVer] - (player.xps[gameVer] % Xmatch.bucketSep);
-      if (!Xmatch.matchBucket[gameVer][bucket]) Xmatch.matchBucket[gameVer][bucket] = [];
-      Xmatch.matchBucket[gameVer][bucket].push(player);
+    players.forEach(pl => {
+      Xmatch.players.push(new Player(pl[0], pl[1], opts.ratingParam.powerAvg + (pl[1] - opts.ratingParam.powerAvg) * 0.5,
+        Xmatch.ratingParam.rd, Xmatch.ratingParam.vol, pl[2]));
     });
+    Player.init(Xmatch.ratingParam);
+    bucketUpdate();
   }
 
-  static processSpla2Match(players) {
-    const matchGroupKeys = getMatchGroupKeys(players, Xmatch.Spla2, 0, 0, 0);
-    const groups = matchGroupKeys.flatMap(mgk => getMatches(mgk, Xmatch.Spla2, {
-      matchAlgo: Xmatch.LimitRateMatch,
-      limitRateDiff: 300,
-    }));
-    Xmatch.matchBucket[Xmatch.Spla2] = [];
-    // console.time('grping');
-    // console.timeEnd('grping');
+  static getSamplesXp() {
+    return Xmatch.sampleIds.reduce((acc, v) => {
+      acc[v] = Xmatch.players[v].xp;
+      return acc;
+    }, {});
+  }
+
+  static processMatch() {
+    const { matchingConfig, ratingParam, battleBalance } = Xmatch;
+    const matchGroupKeys = getMatchGroupKeys(0, 0, 0);
+    const groups = matchGroupKeys.flatMap(mgk => getMatches(mgk, matchingConfig));
+    Xmatch.matchBucket = [];
     groups.forEach(grp => {
-      const teams = group2Team(grp, Xmatch.Spla2, Math.random() > 0.5);
-      executeMatch(teams, {
-        gameVer: Xmatch.Spla2,
-        ratingParam: {
-          isFT3: false,
-          isGuarantee: false,
-        },
-        matchingConfig: {
-          connectionErrorRate: 0.5
-        },
-        battleBalance: {
-          positiveImpactFactor: 0.3,
-          negativeImpactFactor: 0.2,
-        }
-      });
+      const teams = group2Team(grp, matchingConfig.fairSplitTeam >= Math.random());
+      executeMatch(teams, { matchingConfig, ratingParam, battleBalance });
     });
-    Xmatch.bucketUpdate(Xmatch.Spla2, players);
+    bucketUpdate();
   }
+}
 
-  static processSpla3Match(players) {
-    const matchGroupKeys = getMatchGroupKeys(players, Xmatch.Spla3, 3000, 2000, 2000);
-    const groups = matchGroupKeys.flatMap(mgk => getMatches(mgk, Xmatch.Spla3, {
-      matchAlgo: Xmatch.LimitRateMatch,
-      limitRateDiff: 500,
-    }));
-    groups.forEach(grp => {
-      const teams = group2Team(grp, Xmatch.Spla3, Math.random() > 0.5);
-      executeMatch(teams, {
-        gameVer: Xmatch.Spla3,
-        ratingParam: {
-          isFT3: true,
-          isGuarantee: true,
-        },
-        matchingConfig: {
-          connectionErrorRate: 0.5
-        },
-        battleBalance: {
-          positiveImpactFactor: 0.3,
-          negativeImpactFactor: 0.2,
-        }
-      });
-    });
-    Xmatch.bucketUpdate(Xmatch.Spla2, players);
-  }
-
-  static processCustomMatch(players, matchingConfig, ratingParam, battleBalance) {
-    const matchGroupKeys = getMatchGroupKeys(players, Xmatch.Custom, matchingConfig.countStop, matchingConfig.splitRankN, matchingConfig.splitXpN);
-    const groups = matchGroupKeys.flatMap(mgk => getMatches(mgk, Xmatch.Custom, matchingConfig));
-    groups.forEach(grp => {
-      const teams = group2Team(grp, Xmatch.Custom, fairSplitTeam);
-      executeMatch(teams, { gameVer: Xmatch.Custom, matchingConfig, ratingParam, battleBalance });
-    });
-    Xmatch.bucketUpdate(Xmatch.Spla2, players);
-  }
-
+function bucketUpdate() {
+  Xmatch.matchBucket = [];
+  Xmatch.players.forEach(player => {
+    const bucket = player.xp - (player.xp % Xmatch.bucketSep);
+    if (!Xmatch.matchBucket[bucket]) Xmatch.matchBucket[bucket] = [];
+    Xmatch.matchBucket[bucket].push(player);
+  });
 }
 
 function executeMatch(teams, opts) {
-  const { gameVer } = opts;
   const { isFT3, isGuarantee } = opts.ratingParam;
   const { connectionErrorRate } = opts.matchingConfig;
   const { positiveImpactFactor, negativeImpactFactor } = opts.battleBalance;
@@ -117,9 +81,9 @@ function executeMatch(teams, opts) {
   const teamsWithStats = teams.map(team => ({
     // 真の実力は±N%のブレが存在すると考えて計算する。ブレはプレイヤーによって異なる。
     trueRating: average(team.map(_ => _.trueRating * (1 + _.performanceBias * 2 * Math.random() - _.performanceBias))),
-    xp: average(team.map(_ => _.xps[gameVer])),
-    rd: average(team.map(_ => _.rds[gameVer])),
-    vol: average(team.map(_ => _.vols[gameVer])),
+    xp: average(team.map(_ => _.xp)),
+    rd: average(team.map(_ => _.rd)),
+    vol: average(team.map(_ => _.vol)),
   }));
 
   // スプラのXPではなく内部レート(真の実力と仮定)を元に勝率を計算する
@@ -149,22 +113,21 @@ function executeMatch(teams, opts) {
     teams[winTeamIdx].expected = -1;
     teams[winTeamIdx].isWin = 1;
     teams[winTeamIdx].forEach(player => {
-      player.battle(gameVer, teamsWithStats[winTeamIdx - 0], teamsWithStats[1 - winTeamIdx], isFT3, isGuarantee);
+      player.battle(teamsWithStats[winTeamIdx - 0], teamsWithStats[1 - winTeamIdx], isFT3, isGuarantee);
     });
     return;
   }
-
   teams.forEach((team, idx) => {
     team.forEach(player => {
-      player.battle(gameVer, teamsWithStats[idx - 0], teamsWithStats[1 - idx], isFT3, isGuarantee);
+      player.battle(teamsWithStats[idx - 0], teamsWithStats[1 - idx], isFT3, isGuarantee);
     });
   });
 }
 
-function group2Team(grp, gameVer, fairSplitTeam) {
+function group2Team(grp, fairSplitTeam) {
   const teams = [[], []];
   if (fairSplitTeam) {
-    grp.sort((a, b) => Math.min(b.xps[gameVer]) - Math.min(a.xps[gameVer]));
+    grp.sort((a, b) => Math.min(b.xp) - Math.min(a.xp));
   } else {
     grp.shuffle();
   }
@@ -174,11 +137,11 @@ function group2Team(grp, gameVer, fairSplitTeam) {
 }
 
 
-function getMatchGroupKeys(players, gameVer, splitRankN, splitXpN, countStop) {
+function getMatchGroupKeys(splitRankN, splitXpN, countStop) {
   let matchGroupKeys = [];
   // keys = [1025,1050,1075,1100,1150,...]
   // Sep単位で、プレイヤーが存在するレート帯ごとに格納されている
-  const keys = Object.keys(Xmatch.matchBucket[gameVer]).map(Number);
+  const keys = Object.keys(Xmatch.matchBucket).map(Number);
   keys.sort((a, b) => b - a);
   // 1. 指定XP以上を同一XPとみなす
   if (countStop > 0 && (countStop > keys[0])) {
@@ -186,7 +149,7 @@ function getMatchGroupKeys(players, gameVer, splitRankN, splitXpN, countStop) {
       if (keys[i] < countStop) {
         // keys[i - 1]を基準にして、前のレート帯のプレイヤーをまとめる。keys[i]はすでに含まれているので(i-1)でよい
         for (let j = 0; j < (i - 1); j++) {
-          Xmatch.matchBucket[gameVer][keys[i - 1]].push(...Xmatch.matchBucket[gameVer][keys[j]]);
+          Xmatch.matchBucket[keys[i - 1]].push(...Xmatch.matchBucket[keys[j]]);
         }
         break;
       }
@@ -194,10 +157,10 @@ function getMatchGroupKeys(players, gameVer, splitRankN, splitXpN, countStop) {
   }
 
   // 2. 指定順位で区切る
-  if (splitRankN > 0 && (players.length > splitRankN)) { // マッチングをN位以内で区切る場合
+  if (splitRankN > 0 && (Xmatch.players.length > splitRankN)) { // マッチングをN位以内で区切る場合
     let sum = 0;
     for (let i = 0; i < keys.length; i++) {
-      sum += Xmatch.matchBucket[gameVer][keys[i]].length;
+      sum += Xmatch.matchBucket[keys[i]].length;
       if (sum >= splitRankN) {
         matchGroupKeys.push(keys.slice(0, i), keys.slice(i));
         break;
@@ -221,7 +184,7 @@ function getMatchGroupKeys(players, gameVer, splitRankN, splitXpN, countStop) {
   return matchGroupKeys;
 }
 
-function getMatches(matchGroupKeys, gameVer, matchingConfig) {
+function getMatches(matchGroupKeys, matchingConfig) {
   return (matchingConfig.matchAlgo === Xmatch.LimitRateMatch) ? limitRateMatch(matchGroupKeys, matchingConfig) :
     (matchingConfig.matchAlgo === Xmatch.SequentialMatch) ? sequentialMatch(matchGroupKeys) : sequentialMatch(matchGroupKeys);
 
@@ -229,29 +192,29 @@ function getMatches(matchGroupKeys, gameVer, matchingConfig) {
   function limitRateMatch(matchGroupKeys, matchingConfig) {
     const groups = [];
     // マッチング区切り処理を追加したい
-    const { limitRateDiff } = matchingConfig;
+    const { mathLimitRate } = matchingConfig;
     matchGroupKeys.sort((a, b) => b - a); // 不要かも　負荷次第で消す
 
     let currentGroup = [];
-    const idxStep = parseInt(limitRateDiff / Xmatch.bucketSep);
+    const idxStep = parseInt(mathLimitRate / Xmatch.bucketSep);
     // TODO 運が悪いと試合できない人が出てくるけど許容?
 
     for (let i = 0; i < matchGroupKeys.length; i++) {
       const key = matchGroupKeys[i];
-      if (!Xmatch.matchBucket[gameVer][key]) continue;
+      if (!Xmatch.matchBucket[key]) continue;
       currentGroup = [];
-      currentGroup.push(Xmatch.matchBucket[gameVer][key].shift());
-      if (Xmatch.matchBucket[gameVer][key].length == 0) {
-        Xmatch.matchBucket[gameVer][key] = null;
+      currentGroup.push(Xmatch.matchBucket[key].shift());
+      if (Xmatch.matchBucket[key].length == 0) {
+        Xmatch.matchBucket[key] = null;
       }
-      let nextKeys = range(idxStep).map(_ => key + _ * Xmatch.bucketSep).filter(key => Xmatch.matchBucket[gameVer][key]);
+      let nextKeys = range(idxStep).map(_ => key + _ * Xmatch.bucketSep).filter(key => Xmatch.matchBucket[key]);
       for (let j = 0; j < 7; j++) {
         if (nextKeys.length == 0) break;
         const nextKey = Math.floor(nextKeys.length * Math.random());
-        currentGroup.push(Xmatch.matchBucket[gameVer][nextKeys[nextKey]].shift());
-        if (Xmatch.matchBucket[gameVer][nextKeys[nextKey]]?.length == 0) {
-          Xmatch.matchBucket[gameVer][nextKeys[nextKey]] = null;
-          nextKeys = range(idxStep).map(_ => _ * Xmatch.bucketSep).filter(key => Xmatch.matchBucket[gameVer][key]);
+        currentGroup.push(Xmatch.matchBucket[nextKeys[nextKey]].shift());
+        if (Xmatch.matchBucket[nextKeys[nextKey]]?.length == 0) {
+          Xmatch.matchBucket[nextKeys[nextKey]] = null;
+          nextKeys = range(idxStep).map(_ => _ * Xmatch.bucketSep).filter(key => Xmatch.matchBucket[key]);
         }
       }
       if (currentGroup.length === 8) {
@@ -259,7 +222,7 @@ function getMatches(matchGroupKeys, gameVer, matchingConfig) {
       } else {
         currentGroup = [];
       }
-      if (Xmatch.matchBucket[gameVer][key]) i--;
+      if (Xmatch.matchBucket[key]) i--;
     }
 
     return groups;
@@ -272,8 +235,8 @@ function getMatches(matchGroupKeys, gameVer, matchingConfig) {
     const bukects = matchGroupKeys.sort((a, b) => b - a);
     let currentGroup = [];
     bukects.forEach(k => {
-      for (let i = 0, len = Xmatch.matchBucket[gameVer][k].length; i < len; i++) {
-        const player = Xmatch.matchBucket[gameVer][k][i];
+      for (let i = 0, len = Xmatch.matchBucket[k].length; i < len; i++) {
+        const player = Xmatch.matchBucket[k][i];
         currentGroup.push(player);
         if (currentGroup.length == 8) {
           groups.push(currentGroup);
@@ -299,3 +262,11 @@ function sum(array) {
 function range(n) {
   return Array.from(Array(n), (v, k) => k);
 }
+
+Array.prototype.shuffle = function () {
+  for (let i = this.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [this[i], this[j]] = [this[j], this[i]];
+  }
+  return this; // 元の配列を返す
+};
