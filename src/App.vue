@@ -135,7 +135,7 @@
               </v-card-text>
             </v-card>
           </v-col>
-
+          <IkaMorphButton />
         </v-row>
       </v-container>
     </v-main>
@@ -151,6 +151,7 @@ import { BarChart, PieChart, LineChart } from 'echarts/charts';
 import { useTheme } from 'vuetify';
 import VChart, { THEME_KEY } from 'vue-echarts';
 import { UniversalTransition } from 'echarts/features';
+import IkaMorphButton from './components/IkaMorphButton';
 // import * as echarts from 'echarts'; // TODO
 
 import boxmuller from 'box-muller';
@@ -187,7 +188,6 @@ import { Xmatch } from './models/Xmatch.js';
 //   type: 'module',
 // });
 
-const PlayerBarColor = '#a90000'; // TODO
 const LimitRateMatch = Xmatch.LimitRateMatch;
 const SequentialMatch = Xmatch.SequentialMatch;
 const MatchAlgos = [LimitRateMatch, SequentialMatch].map(_ => ({ label: t('matchConfig.' + _), v: _ }));
