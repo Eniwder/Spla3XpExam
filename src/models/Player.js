@@ -11,7 +11,7 @@ export class Player {
     Player.teamPool = range(5).map(_ => [Player.ranking.makePlayer(), Player.ranking.makePlayer()]);
   }
 
-  constructor(id, trueRating, xp, rd, vol, performanceBias) {
+  constructor(id, trueRating, xp, rd, vol, performanceBias, pif, nif) {
     this.id = id;//crypto.randomUUID();
     this.trueRating = trueRating;     // プレイヤーの実際のレーティング
     // プレイヤーのスプラレーティング
@@ -19,6 +19,8 @@ export class Player {
     this.rd = rd; // レーティングの不確実性
     this.vol = vol; // ボラティリティ
     this.performanceBias = performanceBias; // 0 ~ bias
+    this.pif = pif;
+    this.nif = nif;
     this.gameResults = []; // リザルトも3種類確保
     this.history = []; // TODO hituyou?
   }

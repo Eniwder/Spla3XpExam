@@ -37,7 +37,7 @@ export class Xmatch {
     Xmatch.predictPool = range(2).map(_ => Xmatch.ranking4Tmp.makePlayer());
     players.forEach(pl => {
       Xmatch.players.push(new Player(pl[0], pl[1], opts.ratingParam.powerAvg + (pl[1] - opts.ratingParam.powerAvg) * 0.5,
-        Xmatch.ratingParam.rd, Xmatch.ratingParam.vol, pl[2]));
+        Xmatch.ratingParam.rd, Xmatch.ratingParam.vol, pl[2], pl[3], pl[4]));
     });
     Player.init(Xmatch.ratingParam);
     bucketUpdate();
@@ -70,12 +70,13 @@ function bucketUpdate() {
     if (!Xmatch.matchBucket[bucket]) Xmatch.matchBucket[bucket] = [];
     Xmatch.matchBucket[bucket].push(player);
   });
+  // マッチングの偏りを防ぐためにシャッフル
+  Xmatch.matchBucket.forEach(_ => _.shuffle());
 }
 
 function executeMatch(teams, opts) {
   const { isFT3, isGuarantee } = opts.ratingParam;
   const { connectionErrorRate } = opts.matchingConfig;
-  const { positiveImpactFactor, negativeImpactFactor } = opts.battleBalance;
 
   // glicko2は1vs1で対戦するレーティングシステムのため、各チームの平均ステータスを持つ仮想プレイヤーを作成して計算をする
   const teamsWithStats = teams.map(team => ({
@@ -87,13 +88,15 @@ function executeMatch(teams, opts) {
   }));
 
   // スプラのXPではなく内部レート(真の実力と仮定)を元に勝率を計算する
-  // 勝敗は部屋の平均パワーから離れているプレイヤーの影響を大きくする
-  // 例えば極端に弱いプレイヤーがいるチームは負けやすくなり、極端に強いプレイヤーがいるほうが勝ちやすくなる
-  const adjustImpact = ratingDifference => ratingDifference >= 0
-    ? positiveImpactFactor * ratingDifference : -negativeImpactFactor * ratingDifference;
+  // 勝敗は部屋の相手チームの平均パワーと離れているプレイヤーに係数をかけて算出する
+  // 例えばpif(Positive Inpact Factor)が高いプレイヤーはスタダギアなどで格下に強く、低いプレイヤーは前に出ない後衛など試合への関与が低いと想定
+  // nif(Negative Inpact Factor)が高いプレイヤーはスタダギアなどで格上が来るとギアが無駄になって弱く、低いプレイヤーは塗りサポートがうまいとか
+  // つまり、人によって格下に勝ちやすい/勝ちにくい、格上に負けやすい/負けにくいが発生する仕組み
+  const adjustImpact = (ratingDifference, pif, nif) => ratingDifference >= 0
+    ? pif * ratingDifference : -nif * ratingDifference;
 
   teamsWithStats.forEach((team, idx) => {
-    team.actualPower = team.trueRating + sum(teams[idx].map(_ => adjustImpact(_.trueRating - team.trueRating)));
+    team.actualPower = team.trueRating + sum(teams[idx].map(_ => adjustImpact(_.trueRating - team.trueRating, _.pif, _.nif)));
     Xmatch.predictPool[idx].setRating(team.actualPower);
     Xmatch.predictPool[idx].setRd(team.rd);
     Xmatch.predictPool[idx].setVol(team.vol);

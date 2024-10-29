@@ -135,7 +135,7 @@
               </v-card-text>
             </v-card>
           </v-col>
-          <IkaMorphButton />
+          <!-- <IkaMorphButton /> -->
         </v-row>
       </v-container>
     </v-main>
@@ -210,8 +210,8 @@ const Defaults = {
   isFT3: true,
   fairSplitTeam: 0.5,
   countStop: 3000,
-  positiveImpactFactor: 0.3,　// 平均より強いプレイヤーの影響度 TODO このへんは、スプラ2の方式でXP3100のプレイヤーがスプラ3の方式でXP5000になるよう調整する
-  negativeImpactFactor: 0.2,　// 平均より弱いプレイヤーの影響度
+  positiveImpactFactor: 0.1,　// 平均より強いプレイヤーの影響度 TODO このへんは、スプラ2の方式でXP3100のプレイヤーがスプラ3の方式でXP5000になるよう調整する
+  negativeImpactFactor: 0.05,　// 平均より弱いプレイヤーの影響度
   connectionErrorRate: 0.5,　// 回線落ちの確率。片方が確定で勝つ仕様とする
   performanceBias: 5,　// 最大±N%の「上振れと下振れ」のしやすさ能力を表す。0に近いほど常に安定感があるとする。
   matchAlgo: MatchAlgos[0],
@@ -336,6 +336,7 @@ const player = reactive({ ...PlayerDefault });
 let players = [];
 let sampleIds = [];
 let battleCount = 0;
+const workers = [];
 
 
 const barOption = {
@@ -464,13 +465,17 @@ function generatePlayers(playersStats, battleBalance) {
   for (let i = 0; i < playerNum - 1; i++) {
     const powerTrue = Math.max(0, powerAvg * 2 + sd * boxmuller() - powerAvg);
     const bias = (Math.random() * battleBalance.performanceBias) / 100;
-    players.push([i, powerTrue, bias]);
+    const pif = (Math.random() * 2 * battleBalance.positiveImpactFactor) - battleBalance.positiveImpactFactor;
+    const nif = (Math.random() * 2 * battleBalance.negativeImpactFactor) - battleBalance.negativeImpactFactor;
+    players.push([i, powerTrue, bias, pif, nif]);
   }
   player.id = playerNum - 1;
   player.powerTrue = playerPower;
   const bias = (Math.random() * battleBalance.performanceBias) / 100;
+  const pif = (Math.random() * 2 * battleBalance.positiveImpactFactor) - battleBalance.positiveImpactFactor;
+  const nif = (Math.random() * 2 * battleBalance.negativeImpactFactor) - battleBalance.negativeImpactFactor;
 
-  players.push([player.id, player.powerTrue, bias]);
+  players.push([player.id, player.powerTrue, bias, pif, nif]);
   return players;
 }
 
@@ -484,18 +489,10 @@ function updatePlayersSummary(playersStats, players, histData) {
   playersStats.summary.playerPower = playersStats.playerPower;
 }
 
-function getSeriesKey() {
-  return [...sampleIds.flatMap((id, idx) => {
-    const key = String(parseInt(barOption.series[0].data[0].groupId) + idx * SamplingStep);
-    return [key];
-  }), 'player'];
-}
-
 function drawPlayersChart(barOption, chart, histData) {
   barOption.xAxis.data = histData.bins;
   barOption.series[0].data = histData.powersByBin;
-  barOption.series[0].id = 'player';//////////////////////////////////////////////////////////////////////
-  barOption.series[0].universalTransition.seriesKey = getSeriesKey();
+  barOption.series[0].universalTransition.seriesKey = sampleIds.map(String);
   chart.setOption(barOption); // baroptisonをリアクティブにすると重すぎるので手動で更新
 }
 
@@ -516,35 +513,42 @@ function createHistData(players, playerPower, binStep) {
     powers[powerIdx][1]++;
   });
 
-  sampleIds.push(powerMin[0]);
-  for (let i = (powerMin[1] - (powerMin[1] % binStep)), lim = (powerMax[1] + binStep); i < lim; i += binStep) {
+  let sampleId = powerMax[0];
+  for (let i = (powerMax[1] - (powerMax[1] % binStep)), lim = (powerMin[1] - binStep); i > lim; i -= binStep) {
+    if (Math.floor(i / SamplingStep) === Math.floor(playerPower / SamplingStep)) {
+      sampleId = player.id;
+    }
     bins.push(i);
-    let binSum = 0, sampleId = -1;
-    for (let j = i, lim2 = (i + binStep); j < lim2; j++) {
+    let binSum = 0;
+    for (let j = i, lim2 = (i - binStep); j >= lim2; j--) {
       if (powers[j]) {
-        sampleId = powers[j][0];
+        if (sampleId < 0) sampleId = powers[j][0];
         binSum += (powers[j][1] || 0);
       }
     }
     const binData = {
       value: binSum,
-      groupId: String(i - (i % SamplingStep)),
+      groupId: String(sampleId),
       itemStyle: {
         color: splaPallet.spla1.orange
       }
     };
     if ((i <= playerPower) && (playerPower <= i)) {
       binData.itemStyle.color = splaPallet.spla1.blue;
-      binData.groupId = 'player';
+      binData.groupId = player.id;
     }
     powersByBin.push(binData);
     if ((i % SamplingStep === 0) && sampleId >= 0) {
-      sampleIds.push(sampleId);
+      sampleIds.push(Number(sampleId));
+      sampleId = -1;
     }
   }
-  sampleIds.push(powerMax[0]);
+  if (!sampleIds.includes(powerMin[0])) sampleIds.push(powerMin[0]);
+  if (!sampleIds.includes(powerMax[0])) sampleIds.push(powerMax[0]);
   if (!sampleIds.includes(player.id)) sampleIds.push(player.id);
-
+  powersByBin.reverse();
+  bins.reverse();
+  sampleIds.sort((a, b) => a - b);
   return { powerMin, powerMax, powersByBin, bins, sampleIds };
 }
 
@@ -574,7 +578,6 @@ async function startBattleSimulate() {
   const XmatchWorker1 = createWorker(new Worker(new URL('./worker/XmatchWorker.js', import.meta.url), { type: 'module' }));
   const XmatchWorker2 = createWorker(new Worker(new URL('./worker/XmatchWorker.js', import.meta.url), { type: 'module' }));
   // const XmatchWorker3 = createWorker(new Worker(new URL('./worker/XmatchWorker.js', import.meta.url), { type: 'module' }));
-  const workers = [];
   const opts = {
     [Xmatch.Spla2]: Spla2Conf,
     [Xmatch.Spla3]: Spla3Conf,
@@ -600,42 +603,36 @@ async function startBattleSimulate() {
   workers.push([XmatchWorker2, Xmatch.Spla3]);
   // workers.push([XmatchWorker3, Xmatch.Custom]);  // TODO
 
-
-  const grpIds = getSeriesKey();
-  const getChartId = (id, idx, initData) => ((id === player.id) ? 'player' : grpIds[idx]) + ((initData.gameVer === Xmatch.Spla3) ? '' : `_${initData.gameVer}`);
+  const getChartId = data => data.id + ((data.gameVer === Xmatch.Spla3) ? '' : `_${data.gameVer}`);
   // workerInit = [{ xps, gameVer }, ...]
-  const workerInit = await Promise.all(workers.map(_ => _[0]({ command: 'init', players, sampleIds, opts: opts[_[1]] })));
-  console.log(grpIds);
+  const workerInit = await Promise.all(workers.map(_ => _[0].work({ command: 'init', players, sampleIds, opts: opts[_[1]] })));
   lineOption.series = toSeriesOrder(workerInit).map(initData => {
     if (initData.id === player.id) {
       updatePlayerXp(initData.gameVer, toFixedNumber(initData.xp, 1), true);
-      return lineData(getChartId(initData), player.currentXps[initData.gameVer], LineColors[0][initData.gameVer]);
+      return lineData(getChartId(initData), toFixedNumber(initData.xp, 1), LineColors[0][initData.gameVer]);
     } else {
-      return lineData(getChartId(initData), toFixedNumber(initData.xps[id], 1), LineColors[1][initData.gameVer]);
+      return lineData(getChartId(initData), toFixedNumber(initData.xp, 1), LineColors[1][initData.gameVer]);
     }
   });
 
   chart.value.setOption(lineOption, true);
 
-  // Xmatch.init({ tau: ratingParam.tau, rating: playersStats.powerAvg, rd: ratingParam.rd, vol: ratingParam.vol }, players);
   for (let i = 0; i < matchConfig.matchNum; i++) {
     // awaitだと各verのデータをバトル毎に待つのが効率悪いのでthen
-    Promise.all(workers.map(_ => _[0]({ command: 'battle' }))).then(xpsByVer => {
+    Promise.all(workers.map(_ => _[0].work({ command: 'battle' }))).then(xpsByVer => {
       xpsByVer.forEach((data, idx) => {
-        sampleIds.forEach(id => {
-          if (id === player.id) {
-            updatePlayerXp(data.gameVer, toFixedNumber(data.xps[id], 1), true);
-            lineOption.series[idx].data.push(player.currentXps[data.gameVer]);
-          } else {
-            lineOption.series[idx].data.push(toFixedNumber(data.xps[id], 1));
-          }
-        });
+        sampleIds
+          .map(id => [id, getChartId({ id, gameVer: data.gameVer })])
+          .forEach(([id, cid]) => {
+            if (id === player.id) updatePlayerXp(data.gameVer, toFixedNumber(data.xps[id], 1), true);
+            lineOption.series.find(_ => _.dataGroupId == cid).data.push(toFixedNumber(data.xps[id], 1));
+          });
       });
       updateBattleStep(i);
       chart.value.setOption(lineOption);
     }).catch(err => {
       console.error(err);
-      workers.forEach(_ => _.terminate());
+      workers.forEach(_ => _[0].terminate());
       alert('something to wrong'); // TODO
     });
   }
@@ -645,7 +642,7 @@ async function startBattleSimulate() {
   // XmatchWorker3.terminate();
 
   function toSeriesOrder(xpsByVer) {
-    const flatData = xpsByVer.flatMap(gameVer => Object.entries(ver.xps).map((id, xp) => ({ gameVer, id, xp })));
+    const flatData = xpsByVer.flatMap(game => Object.entries(game.xps).map(([id, xp]) => ({ gameVer: game.gameVer, id: Number(id), xp })));
     return flatData.sort(seriesOrderSort);
     // Spla3のデータが最後尾になるように並び替える
     function seriesOrderSort(a, b) {
@@ -661,8 +658,8 @@ async function startBattleSimulate() {
 function updateBattleStep(step) {
   console.log(`done: ${step}`);
   battleCount = step;
-  if (battleCount >= matchConfig.matchNum) {
-    workers.forEach(_ => _.terminate());
+  if (battleCount >= (matchConfig.matchNum - 1)) {
+    workers.forEach(_ => _[0].terminate());
   }
   // 時間計測とか
 }
@@ -717,10 +714,13 @@ function createWorker(worker) {
     resolve(result);
   };
 
-  return data => new Promise(resolve => {
-    map.set(id, resolve);
-    worker.postMessage([id++, data]);
-  });
+  return {
+    terminate: () => worker.terminate(),
+    work: data => new Promise(resolve => {
+      map.set(id, resolve);
+      worker.postMessage([id++, data]);
+    })
+  };
 }
 function sum(array) {
   return array.reduce((accumulator, currentValue) => accumulator + currentValue, 0);
@@ -762,9 +762,12 @@ function toFixedNumber(v, decimals) {
   --spla3-xmatch: #0fdd9e;
 }
 
-body {
+body,
+main {
   font-family: "Paintball", "FOT-Rowdy EB", "FOT-Rowdy Std EB",
     "FOT-Rowdy CID EB", "Rowdy EB", "Rowdy Std EB", "Rowdy CID EB", "M PLUS 2" !important;
+  background-image: url("bg.png") !important;
+  background-repeat: repeat;
 }
 
 

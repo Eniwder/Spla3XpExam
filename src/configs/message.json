@@ -20,8 +20,8 @@
       "matchNum": "マッチング回数"
     },
     "battleBalance": {
-      "positiveImpactFactor": "極端に強い人の影響係数",
-      "negativeImpactFactor": "極端に弱い人の影響係数",
+      "positiveImpactFactor": "格下狩り係数(±幅)",
+      "negativeImpactFactor": "格上耐性係数(±幅)",
       "performanceBias": "強さのブレの最大係数"
     },
     "playersStats": {
