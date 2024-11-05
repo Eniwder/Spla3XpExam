@@ -145,9 +145,9 @@
 
 <script setup>
 import { computed, nextTick, onMounted, reactive, ref, watch, provide, shallowRef } from 'vue';
-import { use, registerTransform } from 'echarts/core';
+import { use } from 'echarts/core';
 import { CanvasRenderer } from 'echarts/renderers';
-import { BarChart, PieChart, LineChart } from 'echarts/charts';
+import { BarChart, PieChart, LineChart, ScatterChart } from 'echarts/charts';
 import { useTheme } from 'vuetify';
 import VChart, { THEME_KEY } from 'vue-echarts';
 import { UniversalTransition } from 'echarts/features';
@@ -163,7 +163,7 @@ import {
   GridComponent,
   DataZoomComponent,
   TransformComponent,
-  ToolboxComponent
+  ToolboxComponent,
 } from 'echarts/components';
 import { useI18n } from "vue-i18n";
 const { t, locale } = useI18n({ useScope: "global" });
@@ -172,6 +172,7 @@ use([
   BarChart,
   PieChart,
   LineChart,
+  ScatterChart,
   TitleComponent,
   TooltipComponent,
   LegendComponent,
@@ -199,7 +200,7 @@ const DefaultChartBack = '#212121';
 
 const Defaults = {
   powerAvg: 2000,
-  playerNum: 200000,
+  playerNum: 2000,
   sd: 240,  // 大体　1000～3000の空間になる。適正3000場合はスプラ2でも当然XP3000を超える。
   rd: 200,
   vol: 0.05,
@@ -217,7 +218,7 @@ const Defaults = {
   matchAlgo: MatchAlgos[0],
   mathLimitRate: 500,
   playerPower: 2400,
-  matchNum: 10,
+  matchNum: 1000,
 };
 
 const chart = shallowRef(null);
@@ -334,6 +335,7 @@ const player = reactive({ ...PlayerDefault });
 // mutable
 // const logHistory = true;
 let players = [];
+let playersResult = [];
 let sampleIds = [];
 let battleCount = 0;
 const workers = [];
@@ -396,7 +398,7 @@ const lineOption = {
   textStyle: DefaultChartFont,
   backgroundColor: DefaultChartBack,
   title: {
-    text: 'AAAAAAAAAA'
+    text: 'XP遷移'
   },
   tooltip: {
     trigger: 'axis'
@@ -423,6 +425,65 @@ const lineOption = {
     // return v.sort((a, b) => b.data - a.data).map((_, idx) => `XP: ${toFixedNumber(_.data, 1)}` + (idx === (v.length - 1) ? '<- You!' : '')).join('<br>');
     // }
   },
+  series: []
+};
+
+const scatterOption = {
+  title: {
+    text: '内部パワーとシリーズ毎のXP分散',
+  },
+  grid: {
+    // left: '3%',
+    // right: '7%',
+    // bottom: '7%',
+    // containLabel: true
+  },
+  tooltip: {
+    // trigger: 'axis',
+    showDelay: 0,
+    axisPointer: {
+      show: true,
+      type: 'cross',
+      lineStyle: {
+        type: 'dashed',
+        width: 1
+      }
+    }
+  },
+  // toolbox: {
+  //   feature: {
+  //     dataZoom: {},
+  //     brush: {
+  //       type: ['rect', 'polygon', 'clear']
+  //     }
+  //   }
+  // },
+  // brush: {},
+  legend: {
+    data: ['Spla2', 'Spla3'],
+    left: 'center',
+    bottom: 10
+  },
+  xAxis: [
+    {
+      type: 'value',
+      scale: true,
+      splitLine: {
+        show: false
+      },
+      name: '内部Power'
+    }
+  ],
+  yAxis: [
+    {
+      type: 'value',
+      scale: true,
+      splitLine: {
+        show: false
+      },
+      name: 'XP'
+    }
+  ],
   series: []
 };
 
@@ -616,6 +677,7 @@ async function startBattleSimulate() {
   });
 
   chart.value.setOption(lineOption, true);
+  const lineUpdate = throttle(opt => chart.value.setOption(lineOption, true), 1000);
 
   for (let i = 0; i < matchConfig.matchNum; i++) {
     // awaitだと各verのデータをバトル毎に待つのが効率悪いのでthen
@@ -629,17 +691,13 @@ async function startBattleSimulate() {
           });
       });
       updateBattleStep(i);
-      chart.value.setOption(lineOption);
+      lineUpdate(lineOption);
     }).catch(err => {
       console.error(err);
       workers.forEach(_ => _[0].terminate());
       alert('something to wrong'); // TODO
     });
   }
-
-  // XmatchWorker1.terminate();
-  // XmatchWorker2.terminate();
-  // XmatchWorker3.terminate();
 
   function toSeriesOrder(xpsByVer) {
     const flatData = xpsByVer.flatMap(game => Object.entries(game.xps).map(([id, xp]) => ({ gameVer: game.gameVer, id: Number(id), xp })));
@@ -656,18 +714,47 @@ async function startBattleSimulate() {
 }
 
 function updateBattleStep(step) {
-  console.log(`done: ${step}`);
+  // console.log(`done: ${step}`);
   battleCount = step;
   if (battleCount >= (matchConfig.matchNum - 1)) {
-    workers.forEach(_ => _[0].terminate());
+    endBattles();
   }
-  // 時間計測とか
 }
 
 function updatePlayerXp(gameVer, newXp, init) {
   player.currentXps[gameVer] = newXp;
   if (init || (newXp > player.maxXps[gameVer])) player.maxXps[gameVer] = newXp;
   if (init || (newXp < player.minXps[gameVer])) player.minXps[gameVer] = newXp;
+}
+
+async function endBattles() {
+  const workerFinish = await Promise.all(workers.map(_ => _[0].work({ command: 'finish' })));
+  console.log(workerFinish);
+  workerFinish.forEach(result => {
+    playersResult[result.gameVer] = result.xps.map(_ => [toFixedNumber(_.trueRating, 1), toFixedNumber(_.xp, 1)]);
+  });
+  workers.forEach(_ => _[0].terminate());
+  setTimeout(() => createScatter(), 1000);
+
+}
+
+function createScatter() {
+  const name = [];
+  name[Xmatch.Spla2] = 'Spla2';
+  name[Xmatch.Spla3] = 'Spla3';
+  const series = [Xmatch.Spla2, Xmatch.Spla3].map(gv => {
+    return {
+      name: name[gv],
+      type: 'scatter',
+      emphasis: {
+        focus: 'series'
+      },
+      data: playersResult[gv]
+    };
+  });
+  scatterOption.series = series;
+  chart.value.setOption(scatterOption, true);
+
 }
 
 // TODO 逆変換も作る。　相互変換のためにデータを上書きしないようにする。
@@ -744,6 +831,27 @@ function average(array) {
 function toFixedNumber(v, decimals) {
   return v.toFixed(decimals);
 }
+function throttle(func, timeout) {
+  let timer;
+  let lastTime;  //前回実行された時のタイムスタンプ（最初は undefined）
+  return function (...args) {
+    const context = this;
+    if (!lastTime) {
+      // 初回のみ
+      func.apply(context, args);
+      lastTime = Date.now();
+    } else {
+      // 初回以外
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        func.apply(context, args);
+        lastTime = Date.now();
+      }, timeout - (Date.now() - lastTime));
+    }
+  };
+}
+
+
 ;</script>
 
 

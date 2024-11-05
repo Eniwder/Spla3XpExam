@@ -10,6 +10,8 @@ addEventListener("message", ev => {
   } else if (data.command === 'battle') {
     Xmatch.processMatch();
     postMessage([id, { gameVer: Xmatch.gameVer, xps: Xmatch.getSamplesXp() }]);
+  } else if (data.command === 'finish') {
+    postMessage([id, { gameVer: Xmatch.gameVer, xps: Xmatch.players }]);
   }
 }, false);
 
